@@ -1,0 +1,172 @@
+import React, { useEffect, useState } from 'react'
+import HomeOwnerLayout from '../../components/layout/HomeOwnerLayout'
+import { useAuth } from '../../hooks/useAuth'
+import { supabase } from '../../supabase/client'
+import LocationPicker from '../../components/maps/LocationPicker'
+import { toast } from 'react-hot-toast'
+
+export default function HOProfile() {
+  const { homeowner, user, refreshProfile } = useAuth()
+  
+  // Profile fields state
+  const [fullName, setFullName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  const [societyName, setSocietyName] = useState('')
+  const [houseNumber, setHouseNumber] = useState('')
+  const [address, setAddress] = useState('')
+  const [latitude, setLatitude] = useState(null)
+  const [longitude, setLongitude] = useState(null)
+  
+  const [updating, setUpdating] = useState(false)
+
+  useEffect(() => {
+    if (homeowner) {
+      setFullName(homeowner.full_name || '')
+      setPhone(homeowner.phone || '')
+      setEmail(homeowner.email || '')
+      setSocietyName(homeowner.society_name || '')
+      setHouseNumber(homeowner.house_number || '')
+      setAddress(homeowner.address || '')
+      setLatitude(homeowner.latitude || null)
+      setLongitude(homeowner.longitude || null)
+    }
+  }, [homeowner])
+
+  const handleLocationChange = (coords) => {
+    setLatitude(coords.latitude)
+    setLongitude(coords.longitude)
+    setAddress(coords.address)
+  }
+
+  const handleSave = async (e) => {
+    e.preventDefault()
+    if (!fullName || !phone || !address) {
+      toast.error('Name, Phone and Address are required')
+      return
+    }
+
+    setUpdating(true)
+    try {
+      // 1. Update users profile
+      const { error: userErr } = await supabase
+        .from('users')
+        .update({ full_name: fullName, phone, email })
+        .eq('id', user.id)
+
+      if (userErr) throw userErr
+
+      // 2. Update homeowners details
+      const { error: hoErr } = await supabase
+        .from('homeowners')
+        .update({
+          full_name: fullName,
+          phone,
+          email,
+          society_name: societyName,
+          house_number: houseNumber,
+          address,
+          latitude,
+          longitude
+        })
+        .eq('user_id', user.id)
+
+      if (hoErr) throw hoErr
+
+      toast.success('Profile updated successfully!')
+      await refreshProfile()
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to update profile details')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  return (
+    <HomeOwnerLayout>
+      <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '640px', margin: '0 auto' }}>
+        <h2 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Profile Settings</h2>
+
+        <form onSubmit={handleSave} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Full Name</label>
+            <input 
+              type="text" 
+              className="form-input" 
+              value={fullName} 
+              onChange={e => setFullName(e.target.value)} 
+              required
+            />
+          </div>
+
+          <div className="grid-2">
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Phone Number</label>
+              <input 
+                type="tel" 
+                className="form-input" 
+                value={phone} 
+                onChange={e => setPhone(e.target.value)} 
+                required
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Email Address</label>
+              <input 
+                type="email" 
+                className="form-input" 
+                value={email} 
+                onChange={e => setEmail(e.target.value)} 
+              />
+            </div>
+          </div>
+
+          <div className="grid-2">
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Society Name</label>
+              <input 
+                type="text" 
+                className="form-input" 
+                value={societyName} 
+                onChange={e => setSocietyName(e.target.value)} 
+              />
+            </div>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">House / Flat Number</label>
+              <input 
+                type="text" 
+                className="form-input" 
+                value={houseNumber} 
+                onChange={e => setHouseNumber(e.target.value)} 
+              />
+            </div>
+          </div>
+
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Delivery Address</label>
+            <textarea 
+              className="form-input" 
+              rows={2} 
+              value={address} 
+              onChange={e => setAddress(e.target.value)} 
+              required
+            />
+          </div>
+
+          {/* Map pin location update picker */}
+          <LocationPicker 
+            lat={latitude} 
+            lng={longitude} 
+            onLocationChange={handleLocationChange} 
+          />
+
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} disabled={updating}>
+            {updating ? <div className="spinner" style={{ width: '20px', height: '20px' }} /> : 'Save Profile Changes'}
+          </button>
+        </form>
+      </div>
+    </HomeOwnerLayout>
+  )
+}
