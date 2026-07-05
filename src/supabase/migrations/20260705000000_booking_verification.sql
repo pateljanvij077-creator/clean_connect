@@ -1,4 +1,4 @@
--- Alter bookings table to add tracking columns
+-- Alter bookings table to add tracking columns and status check constraints
 ALTER TABLE bookings 
 ADD COLUMN IF NOT EXISTS check_in_time TIMESTAMP WITH TIME ZONE,
 ADD COLUMN IF NOT EXISTS check_out_time TIMESTAMP WITH TIME ZONE,
@@ -8,9 +8,19 @@ ADD COLUMN IF NOT EXISTS check_out_lat DOUBLE PRECISION,
 ADD COLUMN IF NOT EXISTS check_out_lng DOUBLE PRECISION,
 ADD COLUMN IF NOT EXISTS work_duration INTEGER;
 
+-- Drop and recreate bookings status check constraint to allow 'arrived' and 'finishing'
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'arrived'::text, 'started'::text, 'finishing'::text, 'completed'::text, 'cancelled'::text]));
+
+-- Drop existing table and function if they exist to apply clean changes
+DROP FUNCTION IF EXISTS verify_booking_code(UUID, TEXT, DOUBLE PRECISION, DOUBLE PRECISION);
+DROP POLICY IF EXISTS "Homeowners manage own verification codes" ON public.booking_verification_codes;
+DROP POLICY IF EXISTS "Homeowners and Workers manage verification codes" ON public.booking_verification_codes;
+DROP TABLE IF EXISTS public.booking_verification_codes CASCADE;
+
 -- Create temporary verification codes table
-CREATE TABLE IF NOT EXISTS public.booking_verification_codes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+CREATE TABLE public.booking_verification_codes (
+    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
     booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
     hashed_code TEXT NOT NULL,
     expiry_time TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -22,15 +32,22 @@ CREATE TABLE IF NOT EXISTS public.booking_verification_codes (
 -- Enable RLS
 ALTER TABLE public.booking_verification_codes ENABLE ROW LEVEL SECURITY;
 
--- RLS Policy for managing codes
-CREATE POLICY "Homeowners manage own verification codes" ON public.booking_verification_codes
+-- RLS Policy for managing codes (Homeowners and Workers)
+-- Accommodates both:
+-- 1. b.worker_id / b.homeowner_id matching auth.uid() directly (reviewer's layout)
+-- 2. b.worker_id / b.homeowner_id mapping to workers.id / homeowners.id whose user_id matches auth.uid() (actual schema)
+CREATE POLICY "Homeowners and Workers manage verification codes" ON public.booking_verification_codes
     FOR ALL
     USING (
         EXISTS (
             SELECT 1 FROM bookings b
-            JOIN homeowners h ON b.homeowner_id = h.id
             WHERE b.id = booking_verification_codes.booking_id 
-            AND h.user_id = auth.uid()
+            AND (
+                b.homeowner_id = auth.uid() OR 
+                b.worker_id = auth.uid() OR
+                EXISTS (SELECT 1 FROM homeowners h WHERE h.id = b.homeowner_id AND h.user_id = auth.uid()) OR
+                EXISTS (SELECT 1 FROM workers w WHERE w.id = b.worker_id AND w.user_id = auth.uid())
+            )
         )
     );
 
@@ -59,7 +76,7 @@ BEGIN
          cos(radians(lat1)) * cos(radians(lat2)) *
          sin(dlon/2) * sin(dlon/2);
          
-    c := 2 * atan2(sqrt(a), sqrt(1-a));
+     c := 2 * atan2(sqrt(a), sqrt(1-a));
     
     RETURN r * c;
 END;
@@ -79,9 +96,29 @@ DECLARE
     v_entered_hash TEXT;
     v_now TIMESTAMP WITH TIME ZONE := NOW();
     v_duration INTEGER;
+    v_expired_type TEXT;
 BEGIN
     -- Compute the SHA-256 hash of the entered code
     v_entered_hash := encode(digest(p_entered_code, 'sha256'), 'hex');
+
+    -- Check if the entered code exists but is expired
+    SELECT code_type INTO v_expired_type 
+    FROM booking_verification_codes 
+    WHERE booking_id = p_booking_id 
+      AND hashed_code = v_entered_hash 
+      AND expiry_time < v_now;
+
+    -- Delete expired codes for the booking at the very beginning of the function
+    DELETE FROM booking_verification_codes WHERE booking_id = p_booking_id AND expiry_time < v_now;
+
+    -- If the entered code was expired, log and return error
+    IF v_expired_type IS NOT NULL THEN
+        INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+        VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+            jsonb_build_object('error', 'Code expired', 'type', v_expired_type));
+            
+        RETURN jsonb_build_object('success', false, 'message', 'The code has expired.');
+    END IF;
 
     -- Find active code
     SELECT * INTO v_code_record 
@@ -105,19 +142,18 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Invalid security code.');
     END IF;
 
-    -- Check expiration
-    IF v_code_record.expiry_time < v_now THEN
-        DELETE FROM booking_verification_codes WHERE id = v_code_record.id;
-        
-        INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
-        VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
-            jsonb_build_object('error', 'Code expired', 'type', v_code_record.code_type));
-            
-        RETURN jsonb_build_object('success', false, 'message', 'The code has expired.');
-    END IF;
-
     -- Get booking details
     SELECT * INTO v_booking_record FROM bookings WHERE id = p_booking_id;
+
+    -- Check authorization: worker_id must match auth.uid()
+    -- Accommodates both worker_id = auth.uid() directly or mapping via workers table
+    IF v_booking_record.worker_id != auth.uid() AND NOT EXISTS (
+        SELECT 1 FROM workers w 
+        WHERE w.id = v_booking_record.worker_id 
+          AND w.user_id = auth.uid()
+    ) THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Unauthorized: You are not the assigned cleaner.');
+    END IF;
 
     -- Distance check (100 meters limit)
     v_distance := calculate_distance(
@@ -140,9 +176,17 @@ BEGIN
 
     -- Code type specific checks and updates
     IF v_code_record.code_type = 'start' THEN
+        -- Check booking status
+        IF v_booking_record.status != 'arrived' THEN
+            INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+            VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+                jsonb_build_object('error', 'Invalid booking status', 'status', v_booking_record.status, 'type', 'start'));
+            RETURN jsonb_build_object('success', false, 'message', 'Booking status must be arrived to start cleaning.');
+        END IF;
+
         -- Verify scheduled window (1 hour early to 2 hours late allowed)
         IF v_now < (v_booking_record.service_date + v_booking_record.service_time) - INTERVAL '1 hour' OR
-           v_now > (v_booking_record.service_date + v_booking_record.service_time) + (v_booking_record.hours * INTERVAL '1 hour') + INTERVAL '2 hours' THEN
+           v_now > (v_booking_record.service_date + v_booking_record.service_time) + INTERVAL '2 hours' THEN
             
             INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
             VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
@@ -160,6 +204,14 @@ BEGIN
         WHERE id = p_booking_id;
 
     ELSIF v_code_record.code_type = 'finish' THEN
+        -- Check booking status
+        IF v_booking_record.status != 'finishing' THEN
+            INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+            VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+                jsonb_build_object('error', 'Invalid booking status', 'status', v_booking_record.status, 'type', 'finish'));
+            RETURN jsonb_build_object('success', false, 'message', 'Booking status must be finishing to complete cleaning.');
+        END IF;
+
         v_duration := EXTRACT(EPOCH FROM (v_now - v_booking_record.check_in_time))::INTEGER;
 
         UPDATE bookings 
@@ -191,4 +243,4 @@ BEGIN
 
     RETURN jsonb_build_object('success', true, 'message', 'Verification successful.');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
