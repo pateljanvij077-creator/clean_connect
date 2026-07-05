@@ -1,50 +1,32 @@
-# Task 2 Report: Service Layer & Coordinates Capturing (with RPC Fixes)
+# Task 2 Report: Fixes & Database Verification
 
-## Status
-**DONE** (Fixes Applied & Verified)
+This report details the implementation of fixes requested for Task 2.
 
-## Implementation Details & Fixes
+## Implemented Changes
 
-We have modified the booking verification codebase to implement security code generation and capture, as well as fixing database RPC function issues identified by the reviewer:
+### 1. In-App Notification Recipient Fixes
+* **Booking Creation Notification:**
+  In [BookingScreen.jsx](file:///c:/Users/Shyam/Desktop/cleanconnect/src/pages/homeowner/BookingScreen.jsx#L104), changed the first parameter in the `createNotification` call from `worker.id` to `worker.user_id`. This ensures the notification points directly to the Auth User ID rather than the worker profile ID.
+* **Booking Cancellation Notification:**
+  In [BookingHistory.jsx](file:///c:/Users/Shyam/Desktop/cleanconnect/src/pages/homeowner/BookingHistory.jsx#L40), changed the first parameter in the `createNotification` call from `booking.workers.id` to `booking.workers.user_id` to route the cancellation notification to the correct cleaner user ID.
 
-### 1. Database Migration Refinements (`src/supabase/migrations/20260705000000_booking_verification.sql`)
-- **Timezone-Aware Scheduled Window Check**:
-  - The scheduled start time check inside `verify_booking_code` was updated to handle timezones properly.
-  - Converting the scheduled local time (from `service_date` + `service_time`) to `TIMESTAMP WITH TIME ZONE` using `AT TIME ZONE 'Asia/Kolkata'` ensures it aligns with the user's local timezone (IST, +05:30 offset).
-  - Formula used:
-    ```sql
-    v_scheduled_start := (v_booking_record.service_date + v_booking_record.service_time) AT TIME ZONE 'Asia/Kolkata';
-    ```
-- **Conditional Distance Check on Coordinates Availability**:
-  - The 100-meter proximity validation check is now skipped if either the booking coordinates (`latitude`/`longitude`) or the cleaner coordinates (`p_cleaner_lat`/`p_cleaner_lng`) are `NULL`.
-  - When skipped, instead of failing, the function sets `v_distance := NULL` and logs a warning event in `activity_logs` with action `'gps_missing'` and metadata `gps_missing: true`.
+### 2. SQL Migration & `verify_booking_code` Update
+* **`v_scheduled_start` NULL Handling:**
+  In [20260705000000_booking_verification.sql](file:///c:/Users/Shyam/Desktop/cleanconnect/src/supabase/migrations/20260705000000_booking_verification.sql#L204-L206), updated the database function `verify_booking_code` to check if `v_scheduled_start` resolves to `NULL`. If it does, the function immediately returns `success: false` and message `'Invalid scheduled service date or time.'` to handle malformed or missing date/time values:
+  ```sql
+  v_scheduled_start := (v_booking_record.service_date + v_booking_record.service_time) AT TIME ZONE 'Asia/Kolkata';
+  
+  IF v_scheduled_start IS NULL THEN
+      RETURN jsonb_build_object('success', false, 'message', 'Invalid scheduled service date or time.');
+  END IF;
+  ```
 
-### 2. Service Layer Updates (`src/services/bookings.js`)
-- Added service function wrappers to interact with Supabase table and RPC endpoint:
-  - `saveHashedCode(bookingId, hashedCode, codeType)`: Deletes pre-existing active codes of this type and stores a new OTP hash with a 10-minute expiry.
-  - `getActiveCode(bookingId, codeType)`: Queries active, unexpired verification codes.
-  - `deleteCode(bookingId, codeType)`: Deletes any active code records of the given type.
-  - `verifyBookingCodeRPC(bookingId, enteredCode, lat, lng)`: Calls the `verify_booking_code` database RPC function to verify cleaner input.
+### 3. Database Migration Applied
+* Re-applied the updated migration SQL directly to the active Supabase project database (`pqxqqgccpzjjiclaxbmb`) using the `execute_sql` MCP tool. The query executed successfully with no errors.
 
-### 3. Homeowner Booking Page Updates (`src/pages/homeowner/BookingScreen.jsx`)
-- Enriched `handleSubmit` to extract current homeowner lat/lng coordinates and pass them to the booking payload so bookings are created with correct geographical anchors.
+### 4. Code Quality & Linter Run
+* Executed `npm run lint` to verify project code style. The linter ran successfully, reporting `0 errors` (only minor unused import/catch warning messages).
 
----
-
-## Verification & Testing
-
-### 1. Database RPC Verification Script (`.superpowers/sdd/test_query.sql`)
-- Updated the SQL test suite:
-  - Configured mock bookings to establish scheduled times in the `Asia/Kolkata` local timezone using `(NOW() AT TIME ZONE 'Asia/Kolkata')`.
-  - Added **Test 3a** to specifically test missing coordinates. Validated that when cleaner coordinates are `NULL`, the distance limit check is skipped, the verification succeeds, the database check-in status updates to `'started'`, and a `'gps_missing'` log is entered with `gps_missing: true` metadata.
-- Executed the SQL transaction script on Supabase project `pqxqqgccpzjjiclaxbmb`. **All tests passed successfully!**
-
-### 2. Linter & Build Auditing
-- Ran OXlint linter successfully with zero syntax/code-style errors.
-- Built Vite application bundle successfully without any compilation errors.
-
----
-
-## Commits
-- **5d3721c**: `feat: add service layer functions and capture coordinates on booking creation`
-- **[New Commit]**: `fix: update verify_booking_code timezone and coordinate checking, expand SQL tests`
+### 5. Git Commit
+* All changes have been staged and committed to git with the commit message:
+  `Implement fixes for Task 2: update notifications recipient, check v_scheduled_start is not null in SQL`
