@@ -8,6 +8,7 @@ import { signUp, signIn, createHomeownerProfile, getRoles } from '../../services
 import { getStates, getCities, getAreas, searchSocieties, findOrCreateSociety, findOrCreateState, findOrCreateCity, findOrCreateArea } from '../../services/locations'
 import LocationPicker from '../../components/maps/LocationPicker'
 import { toast } from 'react-hot-toast'
+import { getLocationDetails } from '../../utils/gps'
 
 export default function HomeOwnerSignup() {
   const navigate = useNavigate()
@@ -109,25 +110,27 @@ export default function HomeOwnerSignup() {
     }
     toast.success(`Society "${soc.name}" selected!`)
   }
-
-  const handleLocationPin = (coords) => {
+  const handleLocationPin = async (coords) => {
     setValue('latitude', coords.latitude)
     setValue('longitude', coords.longitude)
     setValue('address', coords.address)
 
-    // Parse Nominatim details if available to auto-fill location fields
-    const addr = coords.rawGeoData?.address || {}
-    if (addr.state) {
-      setValue('state', addr.state)
-    }
-    if (addr.city || addr.town || addr.village) {
-      setValue('city', addr.city || addr.town || addr.village)
-    }
-    
-    // Suggest society name from reverse geocode
-    const parsedSociety = addr.neighbourhood || addr.suburb || addr.residential || ''
-    if (parsedSociety) {
-      setValue('societyName', parsedSociety)
+    try {
+      const details = await getLocationDetails(coords.latitude, coords.longitude)
+      if (details.state) {
+        setValue('state', details.state)
+      }
+      if (details.city) {
+        setValue('city', details.city)
+      }
+      if (details.area) {
+        setValue('area', details.area)
+      }
+      if (details.society) {
+        setValue('societyName', details.society)
+      }
+    } catch (err) {
+      console.error('Error parsing geocoded details:', err)
     }
   }
 

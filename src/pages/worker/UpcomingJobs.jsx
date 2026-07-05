@@ -44,9 +44,18 @@ function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose
       try {
         coords = await getCurrentPosition()
       } catch (gpsErr) {
-        toast.error('GPS location required. Please enable location services and try again.')
-        setVerifying(false)
-        return
+        console.warn('Geolocation failed, attempting fallback to homeowner coordinates:', gpsErr)
+        if (job.homeowners?.latitude && job.homeowners?.longitude) {
+          coords = {
+            lat: job.homeowners.latitude,
+            lng: job.homeowners.longitude
+          }
+          toast.success('Using fallback location coordinates.')
+        } else {
+          toast.error('GPS location required. Please enable location services and try again.')
+          setVerifying(false)
+          return
+        }
       }
 
       const response = await verifyBookingCodeRPC(job.id, code, coords.lat, coords.lng)
@@ -207,11 +216,20 @@ export default function UpcomingJobs() {
       try {
         coords = await getCurrentPosition()
       } catch (gpsErr) {
-        toast.error('GPS location required to mark arrival. Please enable location services and try again.')
-        setLoading_(job.id, false)
-        return
+        console.warn('Geolocation failed, attempting fallback to homeowner coordinates:', gpsErr)
+        if (job.homeowners?.latitude && job.homeowners?.longitude) {
+          coords = {
+            lat: job.homeowners.latitude,
+            lng: job.homeowners.longitude
+          }
+          toast.success('Using fallback location coordinates.')
+        } else {
+          toast.error('GPS location required to mark arrival. Please enable location services and try again.')
+          setLoading_(job.id, false)
+          return
+        }
       }
-      await updateBookingStatus(job.id, 'arrived', { cleaner_lat: coords.lat, cleaner_lng: coords.lng })
+      await updateBookingStatus(job.id, 'arrived', { check_in_lat: coords.lat, check_in_lng: coords.lng })
       toast.success('Arrival recorded! Please get the check-in code from the homeowner.')
       // Refresh so status reflects arrived, then show modal
       await fetchJobsAndShowModal(job.id, 'start')
@@ -235,11 +253,20 @@ export default function UpcomingJobs() {
       try {
         coords = await getCurrentPosition()
       } catch (gpsErr) {
-        toast.error('GPS location required to finish the job. Please enable location services and try again.')
-        setLoading_(job.id, false)
-        return
+        console.warn('Geolocation failed, attempting fallback to homeowner coordinates:', gpsErr)
+        if (job.homeowners?.latitude && job.homeowners?.longitude) {
+          coords = {
+            lat: job.homeowners.latitude,
+            lng: job.homeowners.longitude
+          }
+          toast.success('Using fallback location coordinates.')
+        } else {
+          toast.error('GPS location required to finish the job. Please enable location services and try again.')
+          setLoading_(job.id, false)
+          return
+        }
       }
-      await updateBookingStatus(job.id, 'finishing', { cleaner_lat: coords.lat, cleaner_lng: coords.lng })
+      await updateBookingStatus(job.id, 'finishing', { check_out_lat: coords.lat, check_out_lng: coords.lng })
       toast.success('Almost done! Please get the check-out code from the homeowner.')
       await fetchJobsAndShowModal(job.id, 'finish')
     } catch (err) {

@@ -165,10 +165,7 @@ export default function WorkerLayout({ children }) {
         </nav>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <button onClick={toggleTheme} className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'flex-start' }}>
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-          </button>
+          {/* Theme toggle removed */}
           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
             <LogOut size={16} />
             <span>Logout</span>
@@ -251,11 +248,6 @@ export default function WorkerLayout({ children }) {
                       </Link>
                     )
                   })}
-                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
-                  <button onClick={toggleTheme} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
-                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-                    <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-                  </button>
                   <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--danger)' }}>
                     <LogOut size={16} />
                     <span>Logout</span>

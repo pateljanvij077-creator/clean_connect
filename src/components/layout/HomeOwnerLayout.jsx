@@ -6,15 +6,90 @@ import { motion } from 'framer-motion'
 import { useAppStore } from '../../store/appStore'
 import { getUnreadNotificationCount, subscribeToNotifications } from '../../services/notifications'
 import { signOut } from '../../services/auth'
+import { supabase } from '../../supabase/client'
+import { toast } from 'react-hot-toast'
+import { getCurrentPosition, getLocationDetails } from '../../utils/gps'
+import { findOrCreateState, findOrCreateCity, findOrCreateArea, findOrCreateSociety } from '../../services/locations'
 
 export default function HomeOwnerLayout({ children }) {
   const navigate = useNavigate()
   const loc = useLocation()
-  const { homeowner, user } = useAuth()
+  const { homeowner, user, refreshProfile } = useAuth()
   const { theme, toggleTheme } = useAppStore()
   const [unread, setUnread] = useState(0)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+  const [autoDetecting, setAutoDetecting] = useState(false)
+
+  const autoDetectLocation = async () => {
+    if (autoDetecting || !user) return
+    setAutoDetecting(true)
+    try {
+      const coords = await getCurrentPosition()
+      const details = await getLocationDetails(coords.lat, coords.lng)
+      
+      let stateId = homeowner?.state_id || null
+      let cityId = homeowner?.city_id || null
+      let areaId = homeowner?.area_id || null
+      let societyId = homeowner?.society_id || null
+
+      if (details.state) {
+        const st = await findOrCreateState(details.state)
+        stateId = st.id
+      }
+      if (details.city && stateId) {
+        const ct = await findOrCreateCity(details.city, stateId)
+        cityId = ct.id
+      }
+      if (details.area && cityId) {
+        const ar = await findOrCreateArea(details.area, cityId)
+        areaId = ar.id
+      }
+      if (details.society && areaId && cityId) {
+        const soc = await findOrCreateSociety({
+          name: details.society,
+          areaId,
+          cityId,
+          latitude: coords.lat,
+          longitude: coords.lng,
+          address: details.address
+        })
+        societyId = soc.id
+      }
+
+      const { error } = await supabase
+        .from('homeowners')
+        .update({
+          state_id: stateId,
+          city_id: cityId,
+          area_id: areaId,
+          society_id: societyId,
+          society_name: details.society || homeowner?.society_name || 'My Location',
+          address: details.address || homeowner?.address || '',
+          latitude: coords.lat,
+          longitude: coords.lng
+        })
+        .eq('user_id', user.id)
+
+      if (error) throw error
+
+      toast.success('Location auto-detected successfully!')
+      if (refreshProfile) {
+        await refreshProfile()
+      }
+    } catch (err) {
+      console.error('Error auto-detecting location:', err)
+      toast.error('Location detection failed. Please allow GPS or update manually.')
+    } finally {
+      setAutoDetecting(false)
+    }
+  }
+
+  useEffect(() => {
+    if (homeowner && (!homeowner.latitude || !homeowner.longitude || !homeowner.society_name)) {
+      autoDetectLocation()
+    }
+  }, [homeowner, user])
 
   useEffect(() => {
     if (!user) return
@@ -132,10 +207,7 @@ export default function HomeOwnerLayout({ children }) {
         </nav>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <button onClick={toggleTheme} className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'flex-start' }}>
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-          </button>
+          {/* Theme toggle removed */}
           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
             <LogOut size={16} />
             <span>Logout</span>
@@ -158,21 +230,37 @@ export default function HomeOwnerLayout({ children }) {
           zIndex: 9
         }}>
           {/* Left section: Location */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', display: 'flex' }}>
+          <div 
+            onClick={autoDetectLocation}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem', 
+              cursor: 'pointer',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              transition: 'background var(--transition-fast)'
+            }}
+            className="glass-hover"
+            title="Click to automatically re-detect your current GPS location"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <div style={{
                 background: 'var(--primary-light)',
                 padding: '6px',
                 borderRadius: '8px',
                 display: 'flex',
-                color: 'var(--primary)'
+                color: 'var(--primary)',
+                animation: autoDetecting ? 'pulse 1.5s infinite' : 'none'
               }}>
                 <MapPin size={18} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>LOCATION</span>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  {autoDetecting ? 'DETECTING...' : 'LOCATION'}
+                </span>
                 <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {homeowner?.society_name || homeowner?.area_id || 'Detecting...'}
+                  {autoDetecting ? 'Finding GPS...' : (homeowner?.society_name || 'Detecting...')}
                 </span>
               </div>
             </div>
@@ -221,11 +309,6 @@ export default function HomeOwnerLayout({ children }) {
                       </Link>
                     )
                   })}
-                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
-                  <button onClick={toggleTheme} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
-                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-                    <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-                  </button>
                   <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--danger)' }}>
                     <LogOut size={16} />
                     <span>Logout</span>

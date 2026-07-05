@@ -16,6 +16,6 @@ export const useAuthStore = create(
       setWorker: (worker) => set({ worker }),
       clearAuth: () => set({ user: null, session: null, role: null, homeowner: null, worker: null }),
     }),
-    { name: 'cleanconnect-auth', partialize: (state) => ({ user: state.user, role: state.role }) }
+    { name: 'cleanconnect-auth', partialize: (state) => ({ user: state.user, role: state.role, homeowner: state.homeowner, worker: state.worker }) }
   )
 )

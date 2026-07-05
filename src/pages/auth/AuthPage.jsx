@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { Sparkles, Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import { signIn } from '../../services/auth'
 import { getUserProfile } from '../../services/auth'
+import { supabase } from '../../supabase/client'
 import { toast } from 'react-hot-toast'
 
 export default function AuthPage() {
@@ -23,7 +24,13 @@ export default function AuthPage() {
     try {
       let authEmail = email
       if (!email.includes('@')) {
-        authEmail = `${email}@cleanconnect.com`
+        // Try looking up the registered email using the RPC function
+        const { data: dbEmail, error: rpcError } = await supabase.rpc('get_user_email_by_phone', { phone_input: email })
+        if (dbEmail) {
+          authEmail = dbEmail
+        } else {
+          authEmail = `${email}@cleanconnect.com`
+        }
       }
       const data = await signIn(authEmail, password)
       toast.success('Logged in successfully!')

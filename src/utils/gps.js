@@ -13,6 +13,7 @@ export function getCurrentPosition() {
       return
     }
     
+    // Attempt high accuracy first
     navigator.geolocation.getCurrentPosition(
       (position) => {
         resolve({
@@ -21,9 +22,21 @@ export function getCurrentPosition() {
         })
       },
       (error) => {
-        reject(error)
+        // Fallback: Retry with low accuracy
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            resolve({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude
+            })
+          },
+          (err) => {
+            reject(err)
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        )
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     )
   })
 }

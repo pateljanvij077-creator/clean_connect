@@ -44,11 +44,8 @@ function SettingsContent() {
           <SettingsIcon size={18} /> Global Preferences
         </h3>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>App Display Theme</span>
-          <button onClick={toggleTheme} className="btn btn-secondary btn-sm" style={{ gap: '6px' }}>
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-          </button>
+          <span>App Interface Theme</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Default Premium Light</span>
         </div>
       </div>
 

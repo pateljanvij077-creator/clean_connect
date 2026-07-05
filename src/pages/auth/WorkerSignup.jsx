@@ -8,6 +8,7 @@ import { signUp, signIn, createWorkerProfile, getRoles } from '../../services/au
 import { getStates, getCities, getAreas, searchSocieties, findOrCreateState, findOrCreateCity, findOrCreateArea, findOrCreateSociety } from '../../services/locations'
 import LocationPicker from '../../components/maps/LocationPicker'
 import { toast } from 'react-hot-toast'
+import { getLocationDetails } from '../../utils/gps'
 
 export default function WorkerSignup() {
   const navigate = useNavigate()
@@ -140,34 +141,22 @@ export default function WorkerSignup() {
       toast.success('Work Location added!')
   }
 
-  const handleLocationPin = (coords) => {
-    // Parse Nominatim details if available to auto-fill location fields
-    const addr = coords.rawGeoData?.address || {}
-    let stateName = currentLoc.stateName
-    let cityName = currentLoc.cityName
-    let societyName = currentLoc.societyName
-
-    if (addr.state) stateName = addr.state
-    if (addr.city || addr.town || addr.village) cityName = (addr.city || addr.town || addr.village)
-    
-    // Suggest society name from reverse geocode
-    const parsedSociety = addr.neighbourhood || addr.suburb || addr.residential || ''
-    if (parsedSociety) societyName = parsedSociety
-    
-    // We can also extract area from suburb if needed, but often suburb is area
-    let areaName = currentLoc.areaName
-    if (addr.suburb && !parsedSociety) areaName = addr.suburb
-
-    setCurrentLoc({
-      ...currentLoc,
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-      address: coords.address,
-      stateName,
-      cityName,
-      areaName,
-      societyName
-    })
+  const handleLocationPin = async (coords) => {
+    try {
+      const details = await getLocationDetails(coords.latitude, coords.longitude)
+      setCurrentLoc(prev => ({
+        ...prev,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        address: coords.address,
+        stateName: details.state || prev.stateName,
+        cityName: details.city || prev.cityName,
+        areaName: details.area || prev.areaName,
+        societyName: details.society || prev.societyName
+      }))
+    } catch (err) {
+      console.error('Error parsing geocoded details:', err)
+    }
   }
 
   const removeLocationRow = (index) => {

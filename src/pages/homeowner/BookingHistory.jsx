@@ -182,7 +182,7 @@ function VerificationCodeCard({ bookingId, activeCode, onRegenerate }) {
 }
 
 export default function BookingHistory() {
-  const { homeowner } = useAuth()
+  const { homeowner, user, loading: authLoading } = useAuth()
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -228,7 +228,8 @@ export default function BookingHistory() {
   }, [homeowner])
 
   const fetchBookings = () => {
-    if (homeowner) {
+    if (authLoading) return
+    if (homeowner && user && homeowner.user_id === user.id) {
       getHomeownerBookings(homeowner.id)
         .then(data => {
           setBookings(data)
@@ -236,16 +237,18 @@ export default function BookingHistory() {
         })
         .catch(err => console.error(err))
         .finally(() => setLoading(false))
+    } else {
+      setLoading(false)
     }
   }
 
   useEffect(() => {
     fetchBookings()
-  }, [homeowner])
+  }, [homeowner, user, authLoading])
 
   // Realtime subscription for public:bookings
   useEffect(() => {
-    if (!homeowner) return
+    if (authLoading || !homeowner || !user || homeowner.user_id !== user.id) return
 
     const channel = supabase
       .channel('bookings-realtime')
@@ -261,7 +264,7 @@ export default function BookingHistory() {
     return () => {
       channel.unsubscribe()
     }
-  }, [homeowner])
+  }, [homeowner, user, authLoading])
 
   const handleGenerateCode = async (bookingId, codeType) => {
     try {
@@ -297,6 +300,9 @@ export default function BookingHistory() {
   }
 
   const checkAndGenerateCodes = async (currentBookings) => {
+    if (authLoading || !homeowner || !user || homeowner.user_id !== user.id) {
+      return
+    }
     let stateChanged = false
     const updatedCodes = { ...activeCodesRef.current }
 
