@@ -97,6 +97,7 @@ DECLARE
     v_now TIMESTAMP WITH TIME ZONE := NOW();
     v_duration INTEGER;
     v_expired_type TEXT;
+    v_scheduled_start TIMESTAMP WITH TIME ZONE;
 BEGIN
     -- Compute the SHA-256 hash of the entered code
     v_entered_hash := encode(digest(p_entered_code, 'sha256'), 'hex');
@@ -155,23 +156,36 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Unauthorized: You are not the assigned cleaner.');
     END IF;
 
-    -- Distance check (100 meters limit)
-    v_distance := calculate_distance(
-        v_booking_record.latitude, v_booking_record.longitude,
-        p_cleaner_lat, p_cleaner_lng
-    );
+    -- Distance check (100 meters limit, conditional on coordinates availability)
+    IF v_booking_record.latitude IS NOT NULL AND v_booking_record.longitude IS NOT NULL 
+       AND p_cleaner_lat IS NOT NULL AND p_cleaner_lng IS NOT NULL THEN
+        v_distance := calculate_distance(
+            v_booking_record.latitude, v_booking_record.longitude,
+            p_cleaner_lat, p_cleaner_lng
+        );
 
-    IF v_distance > 100 THEN
+        IF v_distance > 100 THEN
+            INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+            VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+                jsonb_build_object(
+                    'error', 'Distance limit exceeded',
+                    'distance_meters', v_distance,
+                    'type', v_code_record.code_type,
+                    'gps', jsonb_build_object('lat', p_cleaner_lat, 'lng', p_cleaner_lng)
+                )
+            );
+            RETURN jsonb_build_object('success', false, 'message', 'You must be within 100 meters of the booking location.');
+        END IF;
+    ELSE
+        v_distance := NULL;
         INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
-        VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+        VALUES (auth.uid(), 'gps_missing', 'booking', p_booking_id, 
             jsonb_build_object(
-                'error', 'Distance limit exceeded',
-                'distance_meters', v_distance,
+                'gps_missing', true,
                 'type', v_code_record.code_type,
                 'gps', jsonb_build_object('lat', p_cleaner_lat, 'lng', p_cleaner_lng)
             )
         );
-        RETURN jsonb_build_object('success', false, 'message', 'You must be within 100 meters of the booking location.');
     END IF;
 
     -- Code type specific checks and updates
@@ -184,9 +198,12 @@ BEGIN
             RETURN jsonb_build_object('success', false, 'message', 'Booking status must be arrived to start cleaning.');
         END IF;
 
+        -- Combine service_date and service_time and interpret as Asia/Kolkata timezone
+        v_scheduled_start := (v_booking_record.service_date + v_booking_record.service_time) AT TIME ZONE 'Asia/Kolkata';
+
         -- Verify scheduled window (1 hour early to 2 hours late allowed)
-        IF v_now < (v_booking_record.service_date + v_booking_record.service_time) - INTERVAL '1 hour' OR
-           v_now > (v_booking_record.service_date + v_booking_record.service_time) + INTERVAL '2 hours' THEN
+        IF v_now < v_scheduled_start - INTERVAL '1 hour' OR
+           v_now > v_scheduled_start + INTERVAL '2 hours' THEN
             
             INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
             VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
