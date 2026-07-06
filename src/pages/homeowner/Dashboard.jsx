@@ -9,6 +9,7 @@ import { toggleFavorite, getFavorites } from '../../services/bookings'
 import { Sparkles, SlidersHorizontal, Search } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
+import BottomSheet from '../../components/common/BottomSheet'
 
 export default function HomeOwnerDashboard() {
   const navigate = useNavigate()
@@ -110,52 +111,57 @@ export default function HomeOwnerDashboard() {
               <span>Filters</span>
             </button>
           </div>
-
-          <AnimatePresence>
-            {showFilters && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                style={{ overflow: 'hidden' }}
-              >
-                <div className="grid-3 slide-up" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Worker Type</label>
-                    <select className="form-select" value={workerType} onChange={(e) => setWorkerType(e.target.value)}>
-                      <option value="all">All Service Types</option>
-                      <option value="home_cleaning">Home Cleaning Only</option>
-                      <option value="office_cleaning">Office Cleaning Only</option>
-                      <option value="both">Home & Office Cleaning</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Min Star Rating</label>
-                    <select className="form-select" value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}>
-                      <option value={0}>Show All Ratings</option>
-                      <option value={4}>4.0 ★ & Above</option>
-                      <option value={4.5}>4.5 ★ & Above</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Max Distance ({maxDistance} km)</label>
-                    <input 
-                      type="range" 
-                      min={1} 
-                      max={30} 
-                      value={maxDistance} 
-                      onChange={(e) => setMaxDistance(Number(e.target.value))}
-                      style={{ width: '100%', accentColor: 'var(--primary)' }}
-                    />
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
+        
+        <BottomSheet 
+          isOpen={showFilters} 
+          onClose={() => setShowFilters(false)} 
+          title="Search & Match Filters"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '1rem' }}>
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label" style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text-secondary)' }}>Worker Type</label>
+              <select className="form-select" value={workerType} onChange={(e) => setWorkerType(e.target.value)}>
+                <option value="all">All Service Types</option>
+                <option value="home_cleaning">Home Cleaning Only</option>
+                <option value="office_cleaning">Office Cleaning Only</option>
+                <option value="both">Home & Office Cleaning</option>
+              </select>
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label" style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text-secondary)' }}>Min Star Rating</label>
+              <select className="form-select" value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}>
+                <option value={0}>Show All Ratings</option>
+                <option value={4}>4.0 ★ & Above</option>
+                <option value={4.5}>4.5 ★ & Above</option>
+              </select>
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <label className="form-label" style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Max Distance</label>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--primary)' }}>{maxDistance} km</span>
+              </div>
+              <input 
+                type="range" 
+                min={1} 
+                max={30} 
+                value={maxDistance} 
+                onChange={(e) => setMaxDistance(Number(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--primary)' }}
+              />
+            </div>
+            
+            <button 
+              className="btn btn-primary" 
+              onClick={() => setShowFilters(false)} 
+              style={{ marginTop: '0.75rem', width: '100%', padding: '12px' }}
+            >
+              Apply Filters
+            </button>
+          </div>
+        </BottomSheet>
 
         {/* Workers Feed Grid */}
         {loading ? (

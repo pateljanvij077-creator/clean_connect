@@ -89,7 +89,7 @@ export default function PaymentManagement() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Cleaner Name</th>
@@ -104,22 +104,22 @@ export default function PaymentManagement() {
                 <tbody>
                   {payments.map(py => (
                     <tr key={py.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>
+                      <td data-label="Cleaner Name" style={{ padding: '10px', fontWeight: 700 }}>
                         {py.workers?.full_name}
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{py.workers?.phone}</div>
                       </td>
-                      <td style={{ padding: '10px', fontWeight: 700, color: 'var(--primary)' }}>
+                      <td data-label="Amount Paid" style={{ padding: '10px', fontWeight: 700, color: 'var(--primary)' }}>
                         {formatCurrency(py.amount)}
                       </td>
-                      <td style={{ padding: '10px', textTransform: 'capitalize' }}>{py.payment_method}</td>
-                      <td style={{ padding: '10px' }}>{py.transaction_ref || 'N/A'}</td>
-                      <td style={{ padding: '10px' }}>{formatDate(py.payment_date)}</td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Channel" style={{ padding: '10px', textTransform: 'capitalize' }}>{py.payment_method}</td>
+                      <td data-label="Txn reference" style={{ padding: '10px' }}>{py.transaction_ref || 'N/A'}</td>
+                      <td data-label="Billing Date" style={{ padding: '10px' }}>{formatDate(py.payment_date)}</td>
+                      <td data-label="Status" style={{ padding: '10px' }}>
                         <span className={`badge ${py.status === 'completed' ? 'badge-verified' : 'badge-pending'}`}>
                           {py.status}
                         </span>
                       </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         {py.status === 'pending' && (
                           <button 
                             onClick={() => handleVerifyPayment(py.id, py.subscription_id, py.worker_id)} 

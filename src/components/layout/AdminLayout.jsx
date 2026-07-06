@@ -39,6 +39,13 @@ export default function AdminLayout({ children }) {
     { label: 'System Config', path: '/admin/settings', icon: Settings },
   ]
 
+  const bottomNavItems = [
+    { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+    { label: 'Users', path: '/admin/users', icon: Users },
+    { label: 'Cleaners', path: '/admin/workers', icon: ShieldCheck },
+    { label: 'Bookings', path: '/admin/bookings', icon: Briefcase },
+  ]
+
   return (
     <div className="app-layout">
       {/* Mobile Sidebar Overlay */}
@@ -49,7 +56,7 @@ export default function AdminLayout({ children }) {
 
       {/* Admin Sidebar */}
       <aside className={`app-sidebar glass ${isSidebarOpen ? 'open' : ''}`}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifycontent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
             <div style={{
               background: 'var(--gradient-primary)',
@@ -93,7 +100,6 @@ export default function AdminLayout({ children }) {
         </nav>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {/* Theme toggle removed for light-only experience */}
           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
             <LogOut size={16} />
             <span>Logout</span>
@@ -137,6 +143,26 @@ export default function AdminLayout({ children }) {
           {children}
         </motion.main>
       </div>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="mobile-bottom-nav">
+        {bottomNavItems.map((item, idx) => {
+          const Icon = item.icon
+          const isActive = loc.pathname === item.path
+          return (
+            <Link 
+              key={idx} 
+              to={item.path}
+              className={`bottom-nav-item ${isActive ? 'active' : ''}`}
+            >
+              <div className="icon-container">
+                <Icon size={20} />
+              </div>
+              <span>{item.label}</span>
+            </Link>
+          )
+        })}
+      </nav>
     </div>
   )
 }

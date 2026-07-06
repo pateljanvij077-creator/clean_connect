@@ -145,7 +145,7 @@ export default function BookingManagement() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Client (Homeowner)</th>
@@ -159,24 +159,24 @@ export default function BookingManagement() {
                 <tbody>
                   {filteredBookings.map(b => (
                     <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Client" style={{ padding: '10px' }}>
                         <div style={{ fontWeight: 700 }}>{b.homeowners?.full_name || 'Deleted Client'}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.homeowners?.phone}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Cleaner" style={{ padding: '10px' }}>
                         <div style={{ fontWeight: 700 }}>{b.workers?.full_name || 'Unassigned'}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.workers?.phone || 'N/A'}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Schedule" style={{ padding: '10px' }}>
                         <div>{b.service_date}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{b.service_time}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Duration & Fare" style={{ padding: '10px' }}>
                         <div>{b.hours} Hours</div>
                         <div style={{ fontWeight: 700, color: 'var(--success)' }}>{formatCurrency(b.total_price)}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>{getStatusBadge(b.status)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Status" style={{ padding: '10px' }}>{getStatusBadge(b.status)}</td>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
                           <button 
                             onClick={() => setSelectedBooking(b)} 

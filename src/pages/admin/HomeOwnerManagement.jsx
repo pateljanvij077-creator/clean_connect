@@ -40,7 +40,7 @@ export default function HomeOwnerManagement() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Name</th>
@@ -53,14 +53,14 @@ export default function HomeOwnerManagement() {
                 <tbody>
                   {homeowners.map(h => (
                     <tr key={h.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>{h.full_name}</td>
-                      <td style={{ padding: '10px' }}>{h.phone}</td>
-                      <td style={{ padding: '10px' }}>{h.email || 'N/A'}</td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Name" style={{ padding: '10px', fontWeight: 700 }}>{h.full_name}</td>
+                      <td data-label="Phone" style={{ padding: '10px' }}>{h.phone}</td>
+                      <td data-label="Email" style={{ padding: '10px' }}>{h.email || 'N/A'}</td>
+                      <td data-label="Society / Landmark" style={{ padding: '10px' }}>
                         <div>{h.society_name}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{h.address}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>{formatDate(h.created_at)}</td>
+                      <td data-label="Joined Date" style={{ padding: '10px' }}>{formatDate(h.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

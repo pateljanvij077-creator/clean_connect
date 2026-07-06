@@ -135,7 +135,7 @@ export default function UserManagement() {
             <p style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>No matches found</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>User Details</th>
@@ -149,12 +149,12 @@ export default function UserManagement() {
                 <tbody>
                   {filteredUsers.map(u => (
                     <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>{u.full_name}</td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="User Details" style={{ padding: '10px', fontWeight: 700 }}>{u.full_name}</td>
+                      <td data-label="Contact" style={{ padding: '10px' }}>
                         <div>{u.phone}</div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{u.email || 'No email'}</div>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Role" style={{ padding: '10px' }}>
                         <select 
                           value={u.role_id || ''} 
                           onChange={(e) => handleRoleUpdate(u.id, e.target.value)}
@@ -173,12 +173,12 @@ export default function UserManagement() {
                         >
                           {roles.map(r => (
                             <option key={r.id} value={r.id} style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
-                              {r.name}
+                                {r.name}
                             </option>
                           ))}
                         </select>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Status" style={{ padding: '10px' }}>
                         {u.is_banned ? (
                           <span className="badge badge-danger">Banned</span>
                         ) : u.is_suspended ? (
@@ -187,8 +187,8 @@ export default function UserManagement() {
                           <span className="badge badge-verified">Active</span>
                         )}
                       </td>
-                      <td style={{ padding: '10px' }}>{formatDate(u.created_at)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Created At" style={{ padding: '10px' }}>{formatDate(u.created_at)}</td>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
                           {u.is_suspended || u.is_banned ? (
                             <button 

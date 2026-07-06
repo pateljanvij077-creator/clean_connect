@@ -60,7 +60,7 @@ export default function ComplaintManagement() {
             <p style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>No complaints logged</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Reporter</th>
@@ -75,21 +75,21 @@ export default function ComplaintManagement() {
                 <tbody>
                   {complaints.map(c => (
                     <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>
+                      <td data-label="Reporter" style={{ padding: '10px', fontWeight: 700 }}>
                         {c.reported_by_profile?.full_name}
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Accused User" style={{ padding: '10px' }}>
                         {c.reported_user_profile?.full_name}
                       </td>
-                      <td style={{ padding: '10px', textTransform: 'capitalize' }}>{c.complaint_type}</td>
-                      <td style={{ padding: '10px' }}>{c.description}</td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Type" style={{ padding: '10px', textTransform: 'capitalize' }}>{c.complaint_type}</td>
+                      <td data-label="Description" style={{ padding: '10px' }}>{c.description}</td>
+                      <td data-label="Status" style={{ padding: '10px' }}>
                         <span className={`badge ${c.status === 'resolved' ? 'badge-verified' : 'badge-pending'}`}>
                           {c.status}
                         </span>
                       </td>
-                      <td style={{ padding: '10px', color: 'var(--text-muted)' }}>{c.resolution_notes || 'N/A'}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Resolution Note" style={{ padding: '10px', color: 'var(--text-muted)' }}>{c.resolution_notes || 'N/A'}</td>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         {c.status !== 'resolved' && (
                           <button onClick={() => handleResolve(c.id)} className="btn btn-secondary btn-sm" style={{ gap: '4px' }}>
                             <CheckSquare size={14} /> Resolve

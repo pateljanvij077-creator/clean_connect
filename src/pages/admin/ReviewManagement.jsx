@@ -162,7 +162,7 @@ export default function ReviewManagement() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Homeowner</th>
@@ -176,14 +176,14 @@ export default function ReviewManagement() {
                 <tbody>
                   {filteredReviews.map(r => (
                     <tr key={r.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>{r.homeowners?.full_name || 'Anonymous User'}</td>
-                      <td style={{ padding: '10px' }}>{r.workers?.full_name || 'N/A'}</td>
-                      <td style={{ padding: '10px' }}>{renderStars(r.rating)}</td>
-                      <td style={{ padding: '10px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                      <td data-label="Homeowner" style={{ padding: '10px', fontWeight: 700 }}>{r.homeowners?.full_name || 'Anonymous User'}</td>
+                      <td data-label="Worker Reviewed" style={{ padding: '10px' }}>{r.workers?.full_name || 'N/A'}</td>
+                      <td data-label="Rating" style={{ padding: '10px' }}>{renderStars(r.rating)}</td>
+                      <td data-label="Comment" style={{ padding: '10px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                         {r.comment ? `"${r.comment}"` : <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>No comment text provided</span>}
                       </td>
-                      <td style={{ padding: '10px' }}>{formatDate(r.created_at)}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Submitted At" style={{ padding: '10px' }}>{formatDate(r.created_at)}</td>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         <button 
                           onClick={() => handleDeleteReview(r.id)} 
                           className="btn btn-secondary btn-sm"

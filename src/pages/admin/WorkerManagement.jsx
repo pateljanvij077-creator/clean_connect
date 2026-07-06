@@ -78,7 +78,7 @@ export default function WorkerManagement() {
             <p style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>No cleaners registered yet</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+              <table className="responsive-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px' }}>Cleaner</th>
@@ -92,20 +92,20 @@ export default function WorkerManagement() {
                 <tbody>
                   {workers.map(w => (
                     <tr key={w.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '10px', fontWeight: 700 }}>{w.full_name}</td>
-                      <td style={{ padding: '10px' }}>{w.phone}</td>
-                      <td style={{ padding: '10px' }}>{w.experience_years} Years</td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Cleaner" style={{ padding: '10px', fontWeight: 700 }}>{w.full_name}</td>
+                      <td data-label="Phone" style={{ padding: '10px' }}>{w.phone}</td>
+                      <td data-label="Experience" style={{ padding: '10px' }}>{w.experience_years} Years</td>
+                      <td data-label="Sub Status" style={{ padding: '10px' }}>
                         <span className={`badge ${w.is_subscription_active ? 'badge-verified' : 'badge-danger'}`} style={{ fontSize: '9px' }}>
                           {w.is_subscription_active ? 'ACTIVE' : 'EXPIRED'}
                         </span>
                       </td>
-                      <td style={{ padding: '10px' }}>
+                      <td data-label="Verify State" style={{ padding: '10px' }}>
                         <span className={`badge ${w.verification_status === 'approved' ? 'badge-verified' : 'badge-pending'}`}>
                           {w.verification_status}
                         </span>
                       </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <td data-label="Actions" style={{ padding: '10px', textAlign: 'right' }}>
                         <button onClick={() => handleOpenDocs(w)} className="btn btn-secondary btn-sm" style={{ gap: '4px' }}>
                           <FileText size={14} /> Review Docs
                         </button>
