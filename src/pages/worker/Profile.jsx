@@ -57,9 +57,9 @@ export default function WorkerProfile() {
 
           {/* Avatar */}
           <motion.div whileHover={{ scale: 1.05 }} style={{ position: 'relative', zIndex: 1 }}>
-            {worker.avatar_url ? (
+            {worker.selfie_url || worker.avatar_url ? (
               <img
-                src={worker.avatar_url}
+                src={worker.selfie_url || worker.avatar_url}
                 alt={worker.full_name}
                 style={{
                   width: '100px',

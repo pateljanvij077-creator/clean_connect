@@ -132,8 +132,8 @@ export default function BookingScreen() {
         {/* Worker quick card header */}
         {worker && (
           <div className="card glass" style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '1rem' }}>
-            {worker.avatar_url && (
-              <img src={worker.avatar_url} alt={worker.full_name} style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
+            {(worker.selfie_url || worker.avatar_url) && (
+              <img src={worker.selfie_url || worker.avatar_url} alt={worker.full_name} style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
             )}
             <div>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{worker.full_name}</h3>

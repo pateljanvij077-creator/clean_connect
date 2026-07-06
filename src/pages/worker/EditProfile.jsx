@@ -8,6 +8,7 @@ import {
   addWorkerLocation, 
   removeWorkerLocation, 
   uploadWorkerPhoto, 
+  uploadWorkerSelfie,
   uploadUpiQr 
 } from '../../services/workers'
 import { getStates, getCities, getAreas, findOrCreateState, findOrCreateCity, findOrCreateArea } from '../../services/locations'
@@ -35,6 +36,7 @@ export default function EditProfile() {
 
   // Photo uploads
   const [avatarFile, setAvatarFile] = useState(null)
+  const [selfieFile, setSelfieFile] = useState(null)
   const [upiFile, setUpiFile] = useState(null)
 
   // Locations manager lists
@@ -322,11 +324,23 @@ export default function EditProfile() {
 
   const handleSaveProfile = async (e) => {
     e.preventDefault()
+    
+    // Validate selfie requirement
+    if (!worker?.selfie_url && !selfieFile) {
+      toast.error('Selfie photo is required!')
+      return
+    }
+
     setSaving(true)
     try {
       // 1. Upload photo if present
       if (avatarFile) {
         await uploadWorkerPhoto(worker.id, avatarFile)
+      }
+
+      // Upload selfie if present
+      if (selfieFile) {
+        await uploadWorkerSelfie(worker.id, selfieFile)
       }
       
       // 2. Upload UPI QR if present
@@ -422,19 +436,37 @@ export default function EditProfile() {
 
         <form onSubmit={handleSaveProfile} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           
-          {/* Profile & UPI Upload blocks */}
-          <div className="grid-2">
+          {/* Profile, Selfie & UPI Upload blocks */}
+          <div className="grid-3">
             <div className="form-group" style={{ margin: 0 }}>
               <label className="form-label">Profile Avatar Image</label>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', gap: '4px' }}>
                   <FileUp size={14} /> Upload Avatar
-                  <input type="file" accept="image/*" capture="user" style={{ display: 'none' }} onChange={e => setAvatarFile(e.target.files[0])} />
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => setAvatarFile(e.target.files[0])} />
                 </label>
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   {avatarFile ? avatarFile.name : 'No file chosen'}
                 </span>
               </div>
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Selfie Image <span style={{ color: 'var(--danger)' }}>*Required</span></label>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', gap: '4px' }}>
+                  <FileUp size={14} /> Upload Selfie
+                  <input type="file" accept="image/*" capture="user" style={{ display: 'none' }} onChange={e => setSelfieFile(e.target.files[0])} />
+                </label>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {selfieFile ? selfieFile.name : 'No file chosen'}
+                </span>
+              </div>
+              {worker?.selfie_url && (
+                <div style={{ fontSize: '11px', color: 'var(--success)', marginTop: '4px' }}>
+                  ✓ Selfie already uploaded
+                </div>
+              )}
             </div>
 
             <div className="form-group" style={{ margin: 0 }}>
@@ -617,11 +649,11 @@ export default function EditProfile() {
 
             {/* Configured locations list */}
             <div className="card glass" style={{ padding: '0.75rem' }}>
-              {locations.length === 0 ? (
+              {locations.filter(l => !l.is_primary).length === 0 ? (
                 <p style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)', padding: '0.5rem' }}>No locations added yet.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {locations.map(loc => (
+                  {locations.filter(l => !l.is_primary).map(loc => (
                     <div key={loc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: '4px' }}>
                       <span>{loc.city_name} → {loc.area_name} ({loc.society_name})</span>
                       <button type="button" onClick={() => handleRemoveLocation(loc.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer' }}>

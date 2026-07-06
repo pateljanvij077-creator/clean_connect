@@ -509,9 +509,9 @@ export default function BookingHistory() {
                     style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
                   >
                     <div className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                      {b.workers?.avatar_url && (
+                      {(b.workers?.selfie_url || b.workers?.avatar_url) && (
                         <motion.img
-                          src={b.workers.avatar_url}
+                          src={b.workers.selfie_url || b.workers.avatar_url}
                           alt={b.workers.full_name}
                           whileHover={{ scale: 1.08 }}
                           style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }}

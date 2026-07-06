@@ -153,6 +153,26 @@ export async function uploadWorkerPhoto(workerId, file) {
 }
 
 /**
+ * Worker Selfie Photo upload
+ */
+export async function uploadWorkerSelfie(workerId, file) {
+  const fileExt = file.name.split('.').pop()
+  const fileName = `${workerId}/selfie_${Date.now()}.${fileExt}`
+
+  const { error: uploadError } = await supabase.storage
+    .from('worker-photos')
+    .upload(fileName, file, { cacheControl: '3600', upsert: true })
+
+  if (uploadError) throw uploadError
+
+  const publicUrl = supabase.storage.from('worker-photos').getPublicUrl(fileName).data.publicUrl
+
+  // Update profile
+  await updateWorkerProfile(workerId, { selfie_url: publicUrl })
+  return publicUrl
+}
+
+/**
  * Worker UPI QR Code image upload
  */
 export async function uploadUpiQr(workerId, file) {

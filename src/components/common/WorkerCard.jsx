@@ -24,7 +24,8 @@ export default function WorkerCard({
     languages = [],
     is_subscription_active,
     availability_status,
-    avatar_url
+    avatar_url,
+    selfie_url
   } = worker
 
   const handleWhatsapp = (e) => {
@@ -68,9 +69,9 @@ export default function WorkerCard({
     >
       {/* Profile Photo with Overlays */}
       <div style={{ position: 'relative', height: '160px', width: '100%', overflow: 'hidden', borderRadius: 'var(--radius-sm)' }}>
-        {avatar_url ? (
+        {(selfie_url || avatar_url) ? (
           <motion.img
-            src={avatar_url}
+            src={selfie_url || avatar_url}
             alt={full_name}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             whileHover={{ scale: 1.05 }}
