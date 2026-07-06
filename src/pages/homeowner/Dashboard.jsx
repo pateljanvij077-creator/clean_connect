@@ -76,7 +76,7 @@ export default function HomeOwnerDashboard() {
               Find Cleaning Workers near you
             </h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Cleaners matched by Auto Location → Society → Area → City
+              Cleaners matched by Auto GPS Location
             </p>
           </div>
         </div>
