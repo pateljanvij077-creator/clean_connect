@@ -1,0 +1,288 @@
+# Review package: 47bf283..HEAD
+
+## Commits
+5d3721c feat: add service layer functions and capture coordinates on booking creation
+
+
+## Files changed
+ src/pages/homeowner/BookingScreen.jsx | 105 +++++++++++++++++++++++++---------
+ src/services/bookings.js              |  65 +++++++++++++++++++++
+ 2 files changed, 142 insertions(+), 28 deletions(-)
+
+
+## Diff
+diff --git a/src/pages/homeowner/BookingScreen.jsx b/src/pages/homeowner/BookingScreen.jsx
+index b436c19..28822f9 100644
+--- a/src/pages/homeowner/BookingScreen.jsx
++++ b/src/pages/homeowner/BookingScreen.jsx
+@@ -10,20 +10,21 @@ import { ArrowLeft, Calendar, Clock, MapPin, QrCode } from 'lucide-react'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function BookingScreen() {
+   const { workerId } = useParams()
+   const navigate = useNavigate()
+   const { homeowner } = useAuth()
+   const [worker, setWorker] = useState(null)
+   const [loading, setLoading] = useState(true)
+ 
+   // Form states
++  const [isImmediate, setIsImmediate] = useState(false)
+   const [bookingDate, setBookingDate] = useState('')
+   const [bookingTime, setBookingTime] = useState('09:00')
+   const [notes, setNotes] = useState('')
+   const [address, setAddress] = useState('')
+   const [paymentMethod, setPaymentMethod] = useState('cash')
+   const [showQrModal, setShowQrModal] = useState(false)
+   const [submitting, setSubmitting] = useState(false)
+ 
+   useEffect(() => {
+     getWorkerById(workerId)
+@@ -49,50 +50,67 @@ export default function BookingScreen() {
+     )
+   }
+ 
+   const timeSlots = [
+     '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+     '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+   ]
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault()
+-    if (!bookingDate) {
+-      toast.error('Select a booking date')
+-      return
++    let finalDate = bookingDate
++    let finalTime = `${bookingTime}:00`
++
++    if (isImmediate) {
++      const now = new Date()
++      const year = now.getFullYear()
++      const month = String(now.getMonth() + 1).padStart(2, '0')
++      const day = String(now.getDate()).padStart(2, '0')
++      finalDate = `${year}-${month}-${day}`
++      
++      const hours = String(now.getHours()).padStart(2, '0')
++      const minutes = String(now.getMinutes()).padStart(2, '0')
++      finalTime = `${hours}:${minutes}:00`
++    } else {
++      if (!bookingDate) {
++        toast.error('Select a booking date')
++        return
++      }
+     }
++
+     if (!address) {
+       toast.error('Please enter delivery address')
+       return
+     }
+ 
+     setSubmitting(true)
+     try {
+       // 1. Create booking entry in Supabase database
+       const booking = await createBooking({
+         homeowner_id: homeowner.id,
+         worker_id: worker.id,
+-        booking_date: bookingDate,
+-        booking_time: `${bookingTime}:00`,
++        service_date: finalDate,
++        service_time: finalTime,
+         notes,
+         address,
+-        latitude: homeowner.latitude,
+-        longitude: homeowner.longitude,
++        total_price: worker.pricing_per_hour * 2, // Assuming 2 hours default
+         payment_method: paymentMethod,
+-        status: 'pending'
++        status: 'pending',
++        latitude: homeowner?.latitude || null,
++        longitude: homeowner?.longitude || null
+       })
+ 
+       // 2. Alert worker via in-app notifications system
+       await createNotification(
+-        worker.user_id,
++        worker.id,
+         'New Booking Request!',
+-        `${homeowner.full_name} requested your service on ${bookingDate} at ${bookingTime}`,
++        `${homeowner.full_name} requested your service ${isImmediate ? 'RIGHT NOW' : `on ${finalDate} at ${finalTime}`}`,
+         'booking',
+         { bookingId: booking.id }
+       )
+ 
+       toast.success('Booking requested successfully!')
+       navigate('/homeowner/bookings')
+     } catch (err) {
+       console.error(err)
+       toast.error(err.message || 'Failed to place booking request')
+     } finally {
+@@ -122,41 +140,72 @@ export default function BookingScreen() {
+               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                 Rate: <span style={{ color: 'var(--primary)', fontWeight: 700 }}>{formatCurrency(worker.pricing_per_hour)}/hr</span>
+               </p>
+             </div>
+           </div>
+         )}
+ 
+         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+           
+           <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Service Date</label>
+-            <div style={{ position: 'relative' }}>
+-              <input 
+-                type="date" 
+-                className="form-input" 
+-                min={new Date().toISOString().split('T')[0]}
+-                value={bookingDate}
+-                onChange={(e) => setBookingDate(e.target.value)}
+-                required
+-              />
++            <label className="form-label">When do you need the service?</label>
++            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem' }}>
++              <label className="card glass flex-center" style={{ flex: 1, padding: '0.75rem', cursor: 'pointer', border: !isImmediate ? '2px solid var(--primary)' : '1px solid var(--border-glass)' }}>
++                <input 
++                  type="radio" 
++                  name="bookingTiming" 
++                  checked={!isImmediate} 
++                  onChange={() => setIsImmediate(false)}
++                  style={{ marginRight: '6px' }}
++                />
++                <span style={{ fontSize: '13px', fontWeight: 600 }}>📅 Schedule for later</span>
++              </label>
++
++              <label className="card glass flex-center" style={{ flex: 1, padding: '0.75rem', cursor: 'pointer', border: isImmediate ? '2px solid var(--primary)' : '1px solid var(--border-glass)' }}>
++                <input 
++                  type="radio" 
++                  name="bookingTiming" 
++                  checked={isImmediate} 
++                  onChange={() => setIsImmediate(true)}
++                  style={{ marginRight: '6px' }}
++                />
++                <span style={{ fontSize: '13px', fontWeight: 600 }}>⚡ Book Right Now</span>
++              </label>
+             </div>
+           </div>
+ 
+-          <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Preferred Time Slot</label>
+-            <select className="form-select" value={bookingTime} onChange={(e) => setBookingTime(e.target.value)}>
+-              {timeSlots.map(slot => (
+-                <option key={slot} value={slot}>{slot}</option>
+-              ))}
+-            </select>
+-          </div>
++          {!isImmediate && (
++            <>
++              <div className="form-group" style={{ margin: 0 }}>
++                <label className="form-label">Service Date</label>
++                <div style={{ position: 'relative' }}>
++                  <input 
++                    type="date" 
++                    className="form-input" 
++                    min={new Date().toISOString().split('T')[0]}
++                    value={bookingDate}
++                    onChange={(e) => setBookingDate(e.target.value)}
++                    required={!isImmediate}
++                  />
++                </div>
++              </div>
++
++              <div className="form-group" style={{ margin: 0 }}>
++                <label className="form-label">Preferred Time Slot</label>
++                <select className="form-select" value={bookingTime} onChange={(e) => setBookingTime(e.target.value)}>
++                  {timeSlots.map(slot => (
++                    <option key={slot} value={slot}>{slot}</option>
++                  ))}
++                </select>
++              </div>
++            </>
++          )}
+ 
+           <div className="form-group" style={{ margin: 0 }}>
+             <label className="form-label">Service Address</label>
+             <textarea 
+               className="form-input" 
+               rows={2} 
+               placeholder="Confirm house number, block, society name..."
+               value={address}
+               onChange={(e) => setAddress(e.target.value)}
+               required
+diff --git a/src/services/bookings.js b/src/services/bookings.js
+index b6e2c32..322b1c5 100644
+--- a/src/services/bookings.js
++++ b/src/services/bookings.js
+@@ -118,10 +118,75 @@ export async function toggleFavorite(homeownerId, workerId, isFav) {
+ }
+ 
+ export async function getFavorites(homeownerId) {
+   const { data, error } = await supabase
+     .from('favorites')
+     .select('*, workers(*)')
+     .eq('homeowner_id', homeownerId)
+   if (error) throw error
+   return data
+ }
++
++export async function saveHashedCode(bookingId, hashedCode, codeType) {
++  // Delete any existing active codes of this type first to prevent duplicates
++  await supabase
++    .from('booking_verification_codes')
++    .delete()
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++
++  const expiryTime = new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 minutes
++
++  const { data, error } = await supabase
++    .from('booking_verification_codes')
++    .insert([{
++      booking_id: bookingId,
++      hashed_code: hashedCode,
++      expiry_time: expiryTime,
++      code_type: codeType,
++      used: false
++    }])
++    .select()
++    .single()
++
++  if (error) throw error
++  return data
++}
++
++export async function getActiveCode(bookingId, codeType) {
++  const { data, error } = await supabase
++    .from('booking_verification_codes')
++    .select('*')
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++    .eq('used', false)
++    .gt('expiry_time', new Date().toISOString())
++    .maybeSingle()
++
++  if (error) throw error
++  return data
++}
++
++export async function deleteCode(bookingId, codeType) {
++  const { error } = await supabase
++    .from('booking_verification_codes')
++    .delete()
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++
++  if (error) throw error
++}
++
++export async function verifyBookingCodeRPC(bookingId, enteredCode, lat, lng) {
++  const { data, error } = await supabase
++    .rpc('verify_booking_code', {
++      p_booking_id: bookingId,
++      p_entered_code: enteredCode,
++      p_cleaner_lat: lat,
++      p_cleaner_lng: lng
++    })
++
++  if (error) throw error
++  return data
++}
++
++export const verifyBookingCode = verifyBookingCodeRPC;

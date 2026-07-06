@@ -36,11 +36,7 @@ export default function BookingScreen() {
       .finally(() => setLoading(false))
 
     if (homeowner) {
-      const parts = []
-      if (homeowner.house_number) parts.push(`House/Flat No: ${homeowner.house_number}`)
-      if (homeowner.society_name) parts.push(`Society: ${homeowner.society_name}`)
-      if (homeowner.address) parts.push(homeowner.address)
-      setAddress(parts.join(', '))
+      setAddress(homeowner.address || '')
     }
   }, [workerId, homeowner])
 

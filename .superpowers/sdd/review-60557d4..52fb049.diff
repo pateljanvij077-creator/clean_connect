@@ -1,0 +1,1041 @@
+# Review package: 60557d4..HEAD
+
+## Commits
+52fb049 fix: require GPS at arrival, fix setActiveCodes race, hide expired digits, set autoComplete off
+3d3b49f fix: strip plain code from localStorage, block GPS failure, fix request-new-code status revert, evict consumed codes
+f5df216 feat: implement worker code-entry modal, GPS capture, RPC verification, and request regeneration
+8df09e3 feat: implement homeowner code generation, SHA-256 hashing, countdown timers, and manual regeneration
+
+
+## Files changed
+ .superpowers/sdd/progress.md           |   2 +
+ src/pages/homeowner/BookingHistory.jsx | 422 +++++++++++++++++++++++++++---
+ src/pages/worker/UpcomingJobs.jsx      | 462 ++++++++++++++++++++++++++-------
+ 3 files changed, 764 insertions(+), 122 deletions(-)
+
+
+## Diff
+diff --git a/.superpowers/sdd/progress.md b/.superpowers/sdd/progress.md
+index 98b3b1c..a0b6be1 100644
+--- a/.superpowers/sdd/progress.md
++++ b/.superpowers/sdd/progress.md
+@@ -1,9 +1,11 @@
+ # Booking Verification Progress Ledger
+ 
+ - [x] Task 1: Database Schema & Verification Functions
+ - [x] Task 2: Service Layer & Coordinates Capturing
+ - [ ] Task 3: Homeowner Code Generation, Display, and Regeneration
+ - [ ] Task 4: Cleaner Verification UI & Proximity Validation
+ 
+ Task 1: complete (commits c03041d..47bf283, review clean)
++Task 2: complete (commits 47bf283..60557d4, review clean)
++
+ 
+diff --git a/src/pages/homeowner/BookingHistory.jsx b/src/pages/homeowner/BookingHistory.jsx
+index 69a0d48..ce7720e 100644
+--- a/src/pages/homeowner/BookingHistory.jsx
++++ b/src/pages/homeowner/BookingHistory.jsx
+@@ -1,39 +1,376 @@
+-import React, { useEffect, useState } from 'react'
++import React, { useEffect, useState, useRef } from 'react'
+ import HomeOwnerLayout from '../../components/layout/HomeOwnerLayout'
+-import { getHomeownerBookings, updateBookingStatus, createReview } from '../../services/bookings'
++import { getHomeownerBookings, updateBookingStatus, createReview, saveHashedCode, getActiveCode } from '../../services/bookings'
+ import { createNotification } from '../../services/notifications'
+ import { useAuth } from '../../hooks/useAuth'
+ import { formatDate, formatTime, getStatusClass } from '../../utils/helpers'
+-import { Star, MessageCircle, AlertCircle, X } from 'lucide-react'
++import { Star, MessageCircle, AlertCircle, X, Clock, RefreshCw, Copy, Check } from 'lucide-react'
+ import { toast } from 'react-hot-toast'
++import { supabase } from '../../supabase/client'
++
++const generateSecureCode = () => {
++  const array = new Uint32Array(1)
++  window.crypto.getRandomValues(array)
++  return String(array[0] % 1000000).padStart(6, '0')
++}
++
++const hashSHA256 = async (text) => {
++  const msgBuffer = new TextEncoder().encode(text)
++  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
++  const hashArray = Array.from(new Uint8Array(hashBuffer))
++  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
++}
++
++const formatTimeLeft = (seconds) => {
++  const mins = Math.floor(seconds / 60)
++  const secs = seconds % 60
++  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
++}
++
++function VerificationCodeCard({ bookingId, activeCode, onRegenerate }) {
++  const [timeLeft, setTimeLeft] = useState(0)
++  const [copied, setCopied] = useState(false)
++  const [isRegenerating, setIsRegenerating] = useState(false)
++
++  useEffect(() => {
++    if (!activeCode) return
++
++    const calculateTimeLeft = () => {
++      return Math.max(0, Math.floor((activeCode.expiry - Date.now()) / 1000))
++    }
++
++    setTimeLeft(calculateTimeLeft())
++
++    const timer = setInterval(() => {
++      const remaining = calculateTimeLeft()
++      setTimeLeft(remaining)
++      if (remaining <= 0) {
++        clearInterval(timer)
++      }
++    }, 1000)
++
++    return () => clearInterval(timer)
++  }, [activeCode])
++
++  if (!activeCode) return null
++
++  const handleCopy = () => {
++    navigator.clipboard.writeText(activeCode.code)
++    setCopied(true)
++    setTimeout(() => setCopied(false), 2000)
++    toast.success('Code copied to clipboard!')
++  }
++
++  const handleRegenerateClick = async () => {
++    setIsRegenerating(true)
++    await onRegenerate()
++    setIsRegenerating(false)
++  }
++
++  const isExpired = timeLeft <= 0
++
++  return (
++    <div className="card glass fade-in" style={{
++      borderLeft: '4px solid var(--primary)',
++      padding: '1.25rem',
++      marginTop: '-0.5rem',
++      marginBottom: '0.5rem',
++      display: 'flex',
++      flexDirection: 'column',
++      gap: '0.75rem',
++      background: 'rgba(255, 255, 255, 0.03)',
++      borderRadius: 'var(--radius-md)'
++    }}>
++      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
++        <div>
++          <h4 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
++            <span style={{
++              width: '8px',
++              height: '8px',
++              borderRadius: '50%',
++              backgroundColor: isExpired ? 'var(--danger)' : '#22c55e',
++              display: 'inline-block'
++            }} />
++            {activeCode.type === 'start' ? 'Check-in Security Code' : 'Check-out Security Code'}
++          </h4>
++          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
++            {activeCode.type === 'start' 
++              ? 'Provide this code to the cleaner to start the service.' 
++              : 'Provide this code to the cleaner to complete the service.'}
++          </p>
++        </div>
++
++        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: isExpired ? 'var(--danger)' : 'var(--text-secondary)' }}>
++          <Clock size={16} />
++          {isExpired ? 'Expired' : formatTimeLeft(timeLeft)}
++        </div>
++      </div>
++
++      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
++        {isExpired ? (
++          // M1: Hide stale digits when the code has expired — show a clear prompt instead
++          <div style={{
++            display: 'flex',
++            alignItems: 'center',
++            gap: '0.5rem',
++            background: 'rgba(239, 68, 68, 0.08)',
++            padding: '0.5rem 1rem',
++            borderRadius: '8px',
++            border: '1px solid rgba(239, 68, 68, 0.25)',
++            color: 'var(--danger)',
++            fontSize: '0.85rem',
++            fontWeight: 600
++          }}>
++            Code expired — tap Regenerate to get a new one
++          </div>
++        ) : (
++          <div style={{
++            display: 'flex',
++            alignItems: 'center',
++            gap: '0.75rem',
++            background: 'rgba(0, 0, 0, 0.2)',
++            padding: '0.5rem 1rem',
++            borderRadius: '8px',
++            border: '1px solid rgba(255, 255, 255, 0.1)'
++          }}>
++            <span style={{
++              fontFamily: 'monospace',
++              fontSize: '1.5rem',
++              fontWeight: 800,
++              letterSpacing: '0.15em',
++              color: 'var(--primary)'
++            }}>
++              {activeCode.code}
++            </span>
++            <button 
++              onClick={handleCopy}
++              style={{ 
++                background: 'none', 
++                border: 'none', 
++                color: 'var(--text-secondary)', 
++                cursor: 'pointer', 
++                padding: '4px',
++                display: 'flex',
++                alignItems: 'center',
++                justifyContent: 'center'
++              }}
++              title="Copy Code"
++            >
++              {copied ? <Check size={16} color="#22c55e" /> : <Copy size={16} />}
++            </button>
++          </div>
++        )}
++
++        <button 
++          onClick={handleRegenerateClick} 
++          className="btn btn-secondary btn-sm"
++          disabled={isRegenerating}
++          style={{ 
++            display: 'flex', 
++            alignItems: 'center', 
++            gap: '0.4rem',
++            padding: '0.5rem 0.75rem',
++            fontSize: '0.8rem'
++          }}
++        >
++          <RefreshCw size={14} style={{ transition: 'transform 0.5s ease' }} />
++          {isExpired ? 'Regenerate Code' : 'Regenerate'}
++        </button>
++      </div>
++    </div>
++  )
++}
+ 
+ export default function BookingHistory() {
+   const { homeowner } = useAuth()
+   const [bookings, setBookings] = useState([])
+   const [loading, setLoading] = useState(true)
+ 
+   // Review modal state
+   const [selectedBooking, setSelectedBooking] = useState(null)
+   const [rating, setRating] = useState(5)
+   const [comment, setComment] = useState('')
+   const [submittingReview, setSubmittingReview] = useState(false)
+ 
+-  const fetchBookings = useEffect(() => {
++  // Code generation state
++  const [activeCodes, setActiveCodes] = useState({})
++  const activeCodesRef = useRef({})
++  const generatingRef = useRef({})
++
++  // Update ref when state changes to avoid stale closures in checkAndGenerateCodes
++  useEffect(() => {
++    activeCodesRef.current = activeCodes
++  }, [activeCodes])
++
++  // Load active code metadata from localStorage.
++  // SECURITY: Only { type, expiry } is persisted — the plain code is NEVER stored.
++  useEffect(() => {
++    if (homeowner) {
++      const stored = localStorage.getItem(`active_codes_${homeowner.id}`)
++      if (stored) {
++        try {
++          const parsed = JSON.parse(stored)
++          const now = Date.now()
++          const filtered = {}
++          Object.keys(parsed).forEach(bookingId => {
++            const entry = parsed[bookingId]
++            // Strip any legacy plain-code fields that may have been stored before this fix
++            if (entry && entry.expiry > now) {
++              filtered[bookingId] = { type: entry.type, expiry: entry.expiry }
++            }
++          })
++          setActiveCodes(filtered)
++        } catch (e) {
++          console.error('Error parsing active codes from localStorage', e)
++        }
++      }
++    }
++  }, [homeowner])
++
++  const fetchBookings = () => {
+     if (homeowner) {
+       getHomeownerBookings(homeowner.id)
+-        .then(setBookings)
++        .then(data => {
++          setBookings(data)
++          checkAndGenerateCodes(data)
++        })
+         .catch(err => console.error(err))
+         .finally(() => setLoading(false))
+     }
++  }
++
++  useEffect(() => {
++    fetchBookings()
++  }, [homeowner])
++
++  // Realtime subscription for public:bookings
++  useEffect(() => {
++    if (!homeowner) return
++
++    const channel = supabase
++      .channel('bookings-realtime')
++      .on(
++        'postgres_changes',
++        { event: '*', schema: 'public', table: 'bookings', filter: `homeowner_id=eq.${homeowner.id}` },
++        () => {
++          fetchBookings()
++        }
++      )
++      .subscribe()
++
++    return () => {
++      channel.unsubscribe()
++    }
+   }, [homeowner])
+ 
++  const handleGenerateCode = async (bookingId, codeType) => {
++    try {
++      const code = generateSecureCode()
++      const hashed = await hashSHA256(code)
++      await saveHashedCode(bookingId, hashed, codeType)
++      
++      const expiry = Date.now() + 10 * 60 * 1000 // 10 minutes
++      
++      setActiveCodes(prev => {
++        // SECURITY: Only { type, expiry } is persisted to localStorage.
++        // The plain `code` lives in React state (memory) only and is never written to storage.
++        const metadataOnly = { type: codeType, expiry }
++        const updatedMeta = { ...prev }
++        Object.keys(updatedMeta).forEach(k => {
++          updatedMeta[k] = { type: updatedMeta[k].type, expiry: updatedMeta[k].expiry }
++        })
++        updatedMeta[bookingId] = metadataOnly
++        if (homeowner) {
++          localStorage.setItem(`active_codes_${homeowner.id}`, JSON.stringify(updatedMeta))
++        }
++        // In-memory state retains the plain code for display
++        return {
++          ...prev,
++          [bookingId]: { code, type: codeType, expiry }
++        }
++      })
++      toast.success(`${codeType === 'start' ? 'Start' : 'Finish'} Code generated!`)
++    } catch (err) {
++      console.error(err)
++      toast.error('Failed to generate security code')
++    }
++  }
++
++  const checkAndGenerateCodes = async (currentBookings) => {
++    let stateChanged = false
++    const updatedCodes = { ...activeCodesRef.current }
++
++    for (const b of currentBookings) {
++      if (b.status === 'arrived' || b.status === 'finishing') {
++        const codeType = b.status === 'arrived' ? 'start' : 'finish'
++        
++        // Skip if a generation is already in-flight for this booking
++        if (generatingRef.current[b.id]) {
++          continue
++        }
++        
++        const localCode = activeCodesRef.current[b.id]
++        const hasValidLocalCode = localCode && localCode.type === codeType && localCode.expiry > Date.now()
++        
++        if (hasValidLocalCode) {
++          // Verify the DB record still exists (cleaner may have verified, deleting it).
++          // Only skip regeneration when the DB code is confirmed to exist.
++          try {
++            generatingRef.current[b.id] = true
++            const dbCode = await getActiveCode(b.id, codeType)
++            if (!dbCode) {
++              // I3 fix: Do NOT touch updatedCodes/stateChanged here.
++              // handleGenerateCode calls setActiveCodes internally with the fresh code.
++              // Calling setActiveCodes(updatedCodes) afterwards with the key absent would race
++              // against that update and reinstate the stale entry.
++              await handleGenerateCode(b.id, codeType)
++            }
++            // DB code still valid — nothing to do, keep displaying the current code
++          } catch (err) {
++            console.error('Error checking active code in DB:', err)
++          } finally {
++            delete generatingRef.current[b.id]
++          }
++        } else {
++          // No valid local code — generate a new one
++          try {
++            generatingRef.current[b.id] = true
++            await handleGenerateCode(b.id, codeType)
++          } catch (err) {
++            console.error('Error generating new code:', err)
++          } finally {
++            delete generatingRef.current[b.id]
++          }
++        }
++      } else {
++        // Booking is no longer in a code-required state — evict from local state
++        if (updatedCodes[b.id]) {
++          delete updatedCodes[b.id]
++          stateChanged = true
++        }
++      }
++    }
++
++    if (stateChanged) {
++      // Persist only { type, expiry } — never the plain code
++      const metadataOnly = {}
++      Object.keys(updatedCodes).forEach(k => {
++        metadataOnly[k] = { type: updatedCodes[k].type, expiry: updatedCodes[k].expiry }
++      })
++      setActiveCodes(updatedCodes)
++      if (homeowner) {
++        localStorage.setItem(`active_codes_${homeowner.id}`, JSON.stringify(metadataOnly))
++      }
++    }
++  }
++
+   const handleCancelBooking = async (booking) => {
+     const confirm = window.confirm('Are you sure you want to cancel this booking request?')
+     if (!confirm) return
+ 
+     try {
+       await updateBookingStatus(booking.id, 'cancelled', { cancelled_by: 'homeowner' })
+       toast.success('Booking cancelled successfully')
+       
+       // Notify cleaner
+       await createNotification(
+@@ -102,55 +439,70 @@ export default function BookingHistory() {
+         ) : bookings.length === 0 ? (
+           <div className="card glass flex-center" style={{ padding: '3rem', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
+             <AlertCircle size={36} color="var(--text-muted)" />
+             <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>No Bookings Yet</h3>
+             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+               Your cleaning scheduling requests will appear here.
+             </p>
+           </div>
+         ) : (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+-            {bookings.map(b => (
+-              <div key={b.id} className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+-                {b.workers?.avatar_url && (
+-                  <img src={b.workers.avatar_url} alt={b.workers.full_name} style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover' }} />
+-                )}
+-                
+-                <div style={{ flex: 1, minWidth: '200px' }}>
+-                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{b.workers?.full_name}</h3>
+-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+-                    {formatDate(b.service_date)} at {formatTime(b.service_time)}
+-                  </p>
+-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+-                    Payment: <span style={{ textTransform: 'capitalize' }}>{b.payment_method}</span> ({b.payment_status})
+-                  </p>
+-                </div>
++            {bookings.map(b => {
++              const codeType = b.status === 'arrived' ? 'start' : (b.status === 'finishing' ? 'finish' : null)
++              const activeCode = codeType ? activeCodes[b.id] : null
+ 
+-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+-                  <span className={`badge ${getStatusClass(b.status)}`}>
+-                    {b.status}
+-                  </span>
++              return (
++                <div key={b.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
++                  <div className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
++                    {b.workers?.avatar_url && (
++                      <img src={b.workers.avatar_url} alt={b.workers.full_name} style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover' }} />
++                    )}
++                    
++                    <div style={{ flex: 1, minWidth: '200px' }}>
++                      <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{b.workers?.full_name}</h3>
++                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
++                        {formatDate(b.service_date)} at {formatTime(b.service_time)}
++                      </p>
++                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
++                        Payment: <span style={{ textTransform: 'capitalize' }}>{b.payment_method}</span> ({b.payment_status})
++                      </p>
++                    </div>
+ 
+-                  {b.status === 'pending' && (
+-                    <button onClick={() => handleCancelBooking(b)} className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }}>
+-                      Cancel
+-                    </button>
+-                  )}
++                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
++                      <span className={`badge ${getStatusClass(b.status)}`}>
++                        {b.status}
++                      </span>
+ 
+-                  {b.status === 'completed' && b.payment_status === 'pending' && (
+-                    <button onClick={() => openReviewModal(b)} className="btn btn-primary btn-sm">
+-                      Rate Cleaner
+-                    </button>
++                      {b.status === 'pending' && (
++                        <button onClick={() => handleCancelBooking(b)} className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }}>
++                          Cancel
++                        </button>
++                      )}
++
++                      {b.status === 'completed' && b.payment_status === 'pending' && (
++                        <button onClick={() => openReviewModal(b)} className="btn btn-primary btn-sm">
++                          Rate Cleaner
++                        </button>
++                      )}
++                    </div>
++                  </div>
++
++                  {activeCode && (
++                    <VerificationCodeCard
++                      bookingId={b.id}
++                      activeCode={activeCode}
++                      onRegenerate={() => handleGenerateCode(b.id, codeType)}
++                    />
+                   )}
+                 </div>
+-              </div>
+-            ))}
++              )
++            })}
+           </div>
+         )}
+ 
+         {/* Review Modal dialog */}
+         {selectedBooking && (
+           <div style={{
+             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+             background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+             zIndex: 100, padding: '1.5rem', backdropFilter: 'blur(8px)'
+           }}>
+diff --git a/src/pages/worker/UpcomingJobs.jsx b/src/pages/worker/UpcomingJobs.jsx
+index 1cff11d..5c5f0c5 100644
+--- a/src/pages/worker/UpcomingJobs.jsx
++++ b/src/pages/worker/UpcomingJobs.jsx
+@@ -1,141 +1,429 @@
+-import React, { useEffect, useState } from 'react'
++import React, { useEffect, useState, useRef } from 'react'
+ import WorkerLayout from '../../components/layout/WorkerLayout'
+ import { useAuth } from '../../hooks/useAuth'
+-import { getWorkerBookings, updateBookingStatus } from '../../services/bookings'
++import { getWorkerBookings, updateBookingStatus, verifyBookingCodeRPC, deleteCode } from '../../services/bookings'
+ import { createNotification } from '../../services/notifications'
++import { getCurrentPosition } from '../../utils/gps'
+ import { formatDate, formatTime } from '../../utils/helpers'
+-import { CheckCircle2, Play, Phone, MessageCircle, Navigation } from 'lucide-react'
++import { CheckCircle2, Play, Phone, MessageCircle, Lock, RotateCcw, X, AlertTriangle } from 'lucide-react'
+ import { toast } from 'react-hot-toast'
+ 
++// Statuses that the cleaner actively works within
++const ACTIVE_STATUSES = ['accepted', 'arrived', 'started', 'finishing']
++
++// Statuses that require code verification before the next transition
++const VERIFY_STATUS = {
++  arrived: 'start',    // must verify start code before starting cleaning
++  finishing: 'finish'  // must verify finish code before completing cleaning
++}
++
++/**
++ * Modal that collects the homeowner's 6-digit code and submits it to the RPC.
++ */
++function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose }) {
++  const [code, setCode] = useState('')
++  const [verifying, setVerifying] = useState(false)
++  const [requesting, setRequesting] = useState(false)
++  const inputRef = useRef(null)
++
++  useEffect(() => {
++    inputRef.current?.focus()
++  }, [])
++
++  const handleVerify = async (e) => {
++    e.preventDefault()
++    if (code.length !== 6 || !/^\d{6}$/.test(code)) {
++      toast.error('Please enter the full 6-digit code')
++      return
++    }
++    setVerifying(true)
++    try {
++      // C2 fix: GPS is required. Surface the error rather than silently passing nulls,
++      // which would bypass the 100-metre proximity check in the database function.
++      let coords
++      try {
++        coords = await getCurrentPosition()
++      } catch (gpsErr) {
++        toast.error('GPS location required. Please enable location services and try again.')
++        setVerifying(false)
++        return
++      }
++
++      const response = await verifyBookingCodeRPC(job.id, code, coords.lat, coords.lng)
++      if (response?.success) {
++        toast.success(response.message || 'Verified! Proceeding…')
++        onSuccess()
++      } else {
++        toast.error(response?.message || 'Verification failed. Check the code and try again.')
++      }
++    } catch (err) {
++      console.error(err)
++      toast.error(err.message || 'Verification failed. Please try again.')
++    } finally {
++      setVerifying(false)
++    }
++  }
++
++  const handleDigitChange = (e) => {
++    const val = e.target.value.replace(/\D/g, '').slice(0, 6)
++    setCode(val)
++  }
++
++  const handleRequestNewCode = async () => {
++    const confirmed = window.confirm(
++      'This will invalidate the current code and prompt the homeowner to generate a new one. Continue?'
++    )
++    if (!confirmed) return
++    setRequesting(true)
++    try {
++      await deleteCode(job.id, codeType)
++      // I1 fix: Revert to the correct preceding status.
++      // For start codes (arrived → verified → started): revert to 'arrived' so the cleaner's
++      // GPS arrival record is preserved and only the code is reset.
++      // For finish codes (finishing → verified → completed): revert to 'started'.
++      const prevStatus = codeType === 'start' ? 'arrived' : 'started'
++      await updateBookingStatus(job.id, prevStatus)
++      toast.success('Code reset. Please ask the homeowner to generate a new code.')
++      onRequestNewCode()
++    } catch (err) {
++      console.error(err)
++      toast.error('Failed to request a new code. Please try again.')
++    } finally {
++      setRequesting(false)
++    }
++  }
++
++  const label = codeType === 'start' ? 'Check-in Verification' : 'Check-out Verification'
++  const hint = codeType === 'start'
++    ? 'Ask the homeowner for the 6-digit start code.'
++    : 'Ask the homeowner for the 6-digit finish code.'
++
++  return (
++    <div style={{
++      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
++      background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center',
++      zIndex: 200, padding: '1.5rem', backdropFilter: 'blur(10px)'
++    }} onClick={onClose}>
++      <div className="card glass slide-up" style={{ maxWidth: '400px', width: '100%', gap: '1.5rem' }} onClick={e => e.stopPropagation()}>
++
++        {/* Header */}
++        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
++            <Lock size={18} color="var(--primary)" />
++            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0 }}>{label}</h3>
++          </div>
++          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
++            <X size={20} />
++          </button>
++        </div>
++
++        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>{hint}</p>
++
++        {/* Code input */}
++        <form onSubmit={handleVerify} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
++          <div className="form-group" style={{ margin: 0 }}>
++            <label className="form-label">6-Digit Security Code</label>
++            <input
++              ref={inputRef}
++              type="text"
++              inputMode="numeric"
++              pattern="\d{6}"
++              maxLength={6}
++              autoComplete="off"
++              className="form-input"
++              placeholder="Enter 6-digit code"
++              value={code}
++              onChange={handleDigitChange}
++              style={{ textAlign: 'center', fontSize: '1.5rem', fontFamily: 'monospace', letterSpacing: '0.15em', fontWeight: 700 }}
++              required
++            />
++          </div>
++
++          <button
++            type="submit"
++            className="btn btn-primary"
++            style={{ width: '100%', gap: '0.4rem' }}
++            disabled={verifying || code.length !== 6}
++          >
++            {verifying
++              ? <div className="spinner" style={{ width: '18px', height: '18px' }} />
++              : <><CheckCircle2 size={16} /> Verify &amp; Proceed</>}
++          </button>
++        </form>
++
++        {/* Request new code fallback */}
++        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
++          <button
++            onClick={handleRequestNewCode}
++            disabled={requesting}
++            className="btn btn-secondary btn-sm"
++            style={{ width: '100%', gap: '0.4rem', color: 'var(--text-muted)' }}
++          >
++            {requesting
++              ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
++              : <><RotateCcw size={14} /> Request New Code</>}
++          </button>
++          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
++            Only use this if the homeowner's code has expired or they can't show it.
++          </p>
++        </div>
++      </div>
++    </div>
++  )
++}
++
+ export default function UpcomingJobs() {
+   const { worker } = useAuth()
+   const [jobs, setJobs] = useState([])
+   const [loading, setLoading] = useState(true)
++  // showModal: { job, codeType } | null
++  const [showModal, setShowModal] = useState(null)
++  const [actionLoading, setActionLoading] = useState({})
++
++  const fetchJobs = () => {
++    if (!worker) return
++    getWorkerBookings(worker.id)
++      .then(data => setJobs(data.filter(b => ACTIVE_STATUSES.includes(b.status))))
++      .catch(err => console.error(err))
++      .finally(() => setLoading(false))
++  }
+ 
+   useEffect(() => {
+-    if (worker) {
+-      getWorkerBookings(worker.id)
+-        .then(data => setJobs(data.filter(b => ['accepted', 'started'].includes(b.status))))
+-        .catch(err => console.error(err))
+-        .finally(() => setLoading(false))
+-    }
++    fetchJobs()
+   }, [worker])
+ 
+-  const handleStartJob = async (job) => {
++  const setLoading_ = (jobId, val) =>
++    setActionLoading(prev => ({ ...prev, [jobId]: val }))
++
++  /**
++   * Cleaner taps "Arrived" — capture GPS, set booking to `arrived`, open verification modal.
++   */
++  const handleArrived = async (job) => {
++    setLoading_(job.id, true)
+     try {
+-      await updateBookingStatus(job.id, 'started')
+-      toast.success('Job started! Good luck.')
+-      
+-      // Notify homeowner
+-      await createNotification(
+-        job.homeowners.user_id,
+-        'Cleaner Started Work',
+-        `${worker.full_name} has arrived and started the cleaning work!`,
+-        'booking',
+-        { bookingId: job.id }
+-      )
+-
+-      // Refresh state
+-      setJobs(jobs.map(j => j.id === job.id ? { ...j, status: 'started' } : j))
++      // C3 fix: GPS is required for arrival so the DB can enforce the 100-metre proximity check
++      // during code verification. Surface the error and abort rather than storing null coords.
++      let coords
++      try {
++        coords = await getCurrentPosition()
++      } catch (gpsErr) {
++        toast.error('GPS location required to mark arrival. Please enable location services and try again.')
++        setLoading_(job.id, false)
++        return
++      }
++      await updateBookingStatus(job.id, 'arrived', { cleaner_lat: coords.lat, cleaner_lng: coords.lng })
++      toast.success('Arrival recorded! Please get the check-in code from the homeowner.')
++      // Refresh so status reflects arrived, then show modal
++      await fetchJobsAndShowModal(job.id, 'start')
+     } catch (err) {
+-      toast.error('Failed to update job state')
++      console.error(err)
++      toast.error('Failed to update status. Please try again.')
++    } finally {
++      setLoading_(job.id, false)
+     }
+   }
+ 
+-  const handleCompleteJob = async (job) => {
++  /**
++   * Cleaner taps "Finish Cleaning" — set booking to `finishing`, open verification modal.
++   */
++  const handleFinishing = async (job) => {
++    setLoading_(job.id, true)
++    try {
++      await updateBookingStatus(job.id, 'finishing')
++      toast.success('Almost done! Please get the check-out code from the homeowner.')
++      await fetchJobsAndShowModal(job.id, 'finish')
++    } catch (err) {
++      console.error(err)
++      toast.error('Failed to update status.')
++    } finally {
++      setLoading_(job.id, false)
++    }
++  }
++
++  const fetchJobsAndShowModal = async (jobId, codeType) => {
++    if (!worker) return
++    const data = await getWorkerBookings(worker.id)
++    const filtered = data.filter(b => ACTIVE_STATUSES.includes(b.status))
++    setJobs(filtered)
++    const target = filtered.find(b => b.id === jobId)
++    if (target) setShowModal({ job: target, codeType })
++  }
++
++  /**
++   * Open the verification modal for a booking already in arrived/finishing state.
++   */
++  const handleOpenVerifyModal = (job) => {
++    const codeType = VERIFY_STATUS[job.status]
++    if (!codeType) return
++    setShowModal({ job, codeType })
++  }
++
++  /**
++   * Called when verification succeeds — refresh job list and notify homeowner.
++   */
++  const handleVerifySuccess = async () => {
++    if (!showModal) return
++    const { job, codeType } = showModal
++    setShowModal(null)
+     try {
+-      // Complete job. If payment method is cash, mark as paid. If UPI, we assume they pay on screen.
+-      const paymentStatus = job.payment_method === 'cash' ? 'paid' : 'pending'
+-      
+-      await updateBookingStatus(job.id, 'completed', { payment_status: paymentStatus })
+-      toast.success('Job marked as completed successfully!')
+-      
+-      // Notify homeowner
+-      await createNotification(
+-        job.homeowners.user_id,
+-        'Job Completed!',
+-        `${worker.full_name} has completed the cleaning work. Please review and rate their service.`,
+-        'booking',
+-        { bookingId: job.id }
+-      )
+-
+-      setJobs(jobs.filter(j => j.id !== job.id))
++      const nextStatus = codeType === 'start' ? 'started' : 'completed'
++      const notifTitle = codeType === 'start' ? 'Cleaner Started Work' : 'Job Completed!'
++      const notifBody = codeType === 'start'
++        ? `${worker.full_name} has started cleaning your home.`
++        : `${worker.full_name} has completed the service. Please rate their work.`
++
++      // Status is already updated by the RPC — just notify homeowner & refresh
++      await createNotification(job.homeowners.user_id, notifTitle, notifBody, 'booking', { bookingId: job.id })
++
++      if (nextStatus === 'completed') {
++        setJobs(prev => prev.filter(j => j.id !== job.id))
++      } else {
++        fetchJobs()
++      }
++
++      toast.success(codeType === 'start' ? 'Cleaning started! Good luck.' : 'Job completed! Great work.')
+     } catch (err) {
+-      toast.error('Failed to complete job')
++      console.error(err)
++      fetchJobs()
+     }
+   }
+ 
++  /**
++   * After a new code is requested the booking status reverts — close modal and refresh.
++   */
++  const handleRequestNewCode = () => {
++    setShowModal(null)
++    fetchJobs()
++  }
++
+   return (
+     <WorkerLayout>
+       <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '800px', margin: '0 auto' }}>
+-        <h2 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Upcoming & Active Jobs</h2>
++        <h2 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Upcoming &amp; Active Jobs</h2>
+ 
+         {loading ? (
+           <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
+             <div className="spinner" />
+           </div>
+         ) : jobs.length === 0 ? (
+           <div className="card glass flex-center" style={{ padding: '3rem', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
+             <CheckCircle2 size={36} color="var(--success)" />
+             <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>All Caught Up!</h3>
+             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+               No active or scheduled jobs for today.
+             </p>
+           </div>
+         ) : (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+-            {jobs.map(j => (
+-              <div key={j.id} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+-                  <div>
+-                    <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{j.homeowners?.full_name}</h3>
+-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+-                      Schedule: {formatDate(j.service_date)} at {formatTime(j.service_time)}
+-                    </p>
+-                    <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+-                      📍 <strong>Address:</strong> {j.address}
+-                    </p>
+-                  </div>
++            {jobs.map(j => {
++              const isLoading = !!actionLoading[j.id]
++              const needsVerify = !!VERIFY_STATUS[j.status]
+ 
+-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+-                    <a href={`tel:${j.homeowners?.phone}`} className="btn btn-secondary btn-sm">
+-                      <Phone size={14} /> Call
+-                    </a>
+-                    <a href={`https://wa.me/91${j.homeowners?.phone}`} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">
+-                      <MessageCircle size={14} /> WhatsApp
+-                    </a>
+-                  </div>
+-                </div>
++              return (
++                <div key={j.id} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
++                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
++                    <div>
++                      <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{j.homeowners?.full_name}</h3>
++                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
++                        Schedule: {formatDate(j.service_date)} at {formatTime(j.service_time)}
++                      </p>
++                      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
++                        📍 <strong>Address:</strong> {j.address}
++                      </p>
++                    </div>
+ 
+-                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+-                    <span className="badge badge-verified" style={{ textTransform: 'capitalize' }}>
+-                      Status: {j.status}
+-                    </span>
+-                    <span className="badge badge-pending" style={{ textTransform: 'capitalize' }}>
+-                      Payment: {j.payment_method}
+-                    </span>
++                    <div style={{ display: 'flex', gap: '0.5rem' }}>
++                      <a href={`tel:${j.homeowners?.phone}`} className="btn btn-secondary btn-sm">
++                        <Phone size={14} /> Call
++                      </a>
++                      <a href={`https://wa.me/91${j.homeowners?.phone}`} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">
++                        <MessageCircle size={14} /> WhatsApp
++                      </a>
++                    </div>
+                   </div>
+ 
+-                  <div>
+-                    {j.status === 'accepted' ? (
+-                      <button onClick={() => handleStartJob(j)} className="btn btn-primary btn-sm" style={{ gap: '4px' }}>
+-                        <Play size={14} fill="white" /> Start Cleaning
+-                      </button>
+-                    ) : (
+-                      <button onClick={() => handleCompleteJob(j)} className="btn btn-primary btn-sm" style={{ gap: '4px' }}>
+-                        <CheckCircle2 size={14} /> Complete Job
+-                      </button>
+-                    )}
++                  <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
++                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
++                      <span className="badge badge-verified" style={{ textTransform: 'capitalize' }}>
++                        Status: {j.status}
++                      </span>
++                      <span className="badge badge-pending" style={{ textTransform: 'capitalize' }}>
++                        Payment: {j.payment_method}
++                      </span>
++                      {needsVerify && (
++                        <span className="badge" style={{ background: 'rgba(251, 191, 36, 0.15)', color: '#f59e0b', border: '1px solid rgba(251, 191, 36, 0.3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
++                          <AlertTriangle size={11} /> Code Required
++                        </span>
++                      )}
++                    </div>
++
++                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
++                      {/* accepted → arrived (tap to mark arrival and open modal) */}
++                      {j.status === 'accepted' && (
++                        <button
++                          onClick={() => handleArrived(j)}
++                          className="btn btn-primary btn-sm"
++                          style={{ gap: '4px' }}
++                          disabled={isLoading}
++                        >
++                          {isLoading ? <div className="spinner" style={{ width: '14px', height: '14px' }} /> : <><Play size={14} fill="white" /> Arrived</>}
++                        </button>
++                      )}
++
++                      {/* arrived → open code modal (re-open if needed) */}
++                      {j.status === 'arrived' && (
++                        <button
++                          onClick={() => handleOpenVerifyModal(j)}
++                          className="btn btn-primary btn-sm"
++                          style={{ gap: '4px' }}
++                          disabled={isLoading}
++                        >
++                          <Lock size={14} /> Enter Start Code
++                        </button>
++                      )}
++
++                      {/* started → finishing (tap to trigger finish code) */}
++                      {j.status === 'started' && (
++                        <button
++                          onClick={() => handleFinishing(j)}
++                          className="btn btn-primary btn-sm"
++                          style={{ gap: '4px' }}
++                          disabled={isLoading}
++                        >
++                          {isLoading ? <div className="spinner" style={{ width: '14px', height: '14px' }} /> : <><CheckCircle2 size={14} /> Finish Cleaning</>}
++                        </button>
++                      )}
++
++                      {/* finishing → open code modal (re-open if needed) */}
++                      {j.status === 'finishing' && (
++                        <button
++                          onClick={() => handleOpenVerifyModal(j)}
++                          className="btn btn-primary btn-sm"
++                          style={{ gap: '4px' }}
++                          disabled={isLoading}
++                        >
++                          <Lock size={14} /> Enter Finish Code
++                        </button>
++                      )}
++                    </div>
+                   </div>
+                 </div>
+-
+-              </div>
+-            ))}
++              )
++            })}
+           </div>
+         )}
+-
+       </div>
++
++      {/* Verification Modal */}
++      {showModal && (
++        <VerificationModal
++          job={showModal.job}
++          codeType={showModal.codeType}
++          onSuccess={handleVerifySuccess}
++          onRequestNewCode={handleRequestNewCode}
++          onClose={() => setShowModal(null)}
++        />
++      )}
+     </WorkerLayout>
+   )
+ }

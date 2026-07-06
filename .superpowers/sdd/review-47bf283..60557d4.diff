@@ -1,0 +1,3882 @@
+# Review package: 47bf283..HEAD
+
+## Commits
+60557d4 docs: add completed Task 2 report
+580dbf7 Implement fixes for Task 2: update notifications recipient, check v_scheduled_start is not null in SQL
+87ed3ee fix: update verify_booking_code timezone handling and coordinates check
+5d3721c feat: add service layer functions and capture coordinates on booking creation
+
+
+## Files changed
+ .superpowers/sdd/progress.md                       |   5 +-
+ .superpowers/sdd/task-2-report.md                  |  32 +++
+ .superpowers/sdd/test_query.sql                    |  32 ++-
+ package-lock.json                                  |  70 +++--
+ package.json                                       |   1 +
+ src/App.css                                        | 184 ------------
+ src/App.jsx                                        |  10 +
+ src/components/common/WorkerCard.jsx               |  10 +-
+ src/components/layout/AdminLayout.jsx              |  84 +++---
+ src/components/layout/HomeOwnerLayout.jsx          | 222 +++++++++++----
+ src/components/layout/WorkerLayout.jsx             | 209 ++++++++++----
+ src/components/maps/LocationPicker.jsx             |  14 +
+ src/index.css                                      | 111 --------
+ src/pages/admin/UserManagement.jsx                 |  98 ++++++-
+ src/pages/admin/WorkerManagement.jsx               |   9 +-
+ src/pages/auth/AuthPage.jsx                        |  12 +-
+ src/pages/auth/DocumentUpload.jsx                  |  38 ++-
+ src/pages/auth/HomeOwnerSignup.jsx                 | 152 +++++++---
+ src/pages/auth/WorkerSignup.jsx                    | 309 ++++++++++++++++-----
+ src/pages/homeowner/BookingHistory.jsx             |   4 +-
+ src/pages/homeowner/BookingScreen.jsx              | 103 +++++--
+ src/pages/worker/BookingRequests.jsx               |   8 +-
+ src/pages/worker/Dashboard.jsx                     |   4 +-
+ src/pages/worker/EditProfile.jsx                   |   2 +-
+ src/pages/worker/UpcomingJobs.jsx                  |   2 +-
+ src/services/auth.js                               |   8 +-
+ src/services/bookings.js                           |  65 +++++
+ src/services/locations.js                          |  76 ++++-
+ src/styles/globals.css                             | 167 +++++++++++
+ .../20260705000000_booking_verification.sql        |  45 ++-
+ 30 files changed, 1424 insertions(+), 662 deletions(-)
+
+
+## Diff
+diff --git a/.superpowers/sdd/progress.md b/.superpowers/sdd/progress.md
+index cfd3f1c..98b3b1c 100644
+--- a/.superpowers/sdd/progress.md
++++ b/.superpowers/sdd/progress.md
+@@ -1,6 +1,9 @@
+ # Booking Verification Progress Ledger
+ 
+ - [x] Task 1: Database Schema & Verification Functions
+-- [ ] Task 2: Service Layer & Coordinates Capturing
++- [x] Task 2: Service Layer & Coordinates Capturing
+ - [ ] Task 3: Homeowner Code Generation, Display, and Regeneration
+ - [ ] Task 4: Cleaner Verification UI & Proximity Validation
++
++Task 1: complete (commits c03041d..47bf283, review clean)
++
+diff --git a/.superpowers/sdd/task-2-report.md b/.superpowers/sdd/task-2-report.md
+new file mode 100644
+index 0000000..b348b14
+--- /dev/null
++++ b/.superpowers/sdd/task-2-report.md
+@@ -0,0 +1,32 @@
++# Task 2 Report: Fixes & Database Verification
++
++This report details the implementation of fixes requested for Task 2.
++
++## Implemented Changes
++
++### 1. In-App Notification Recipient Fixes
++* **Booking Creation Notification:**
++  In [BookingScreen.jsx](file:///c:/Users/Shyam/Desktop/cleanconnect/src/pages/homeowner/BookingScreen.jsx#L104), changed the first parameter in the `createNotification` call from `worker.id` to `worker.user_id`. This ensures the notification points directly to the Auth User ID rather than the worker profile ID.
++* **Booking Cancellation Notification:**
++  In [BookingHistory.jsx](file:///c:/Users/Shyam/Desktop/cleanconnect/src/pages/homeowner/BookingHistory.jsx#L40), changed the first parameter in the `createNotification` call from `booking.workers.id` to `booking.workers.user_id` to route the cancellation notification to the correct cleaner user ID.
++
++### 2. SQL Migration & `verify_booking_code` Update
++* **`v_scheduled_start` NULL Handling:**
++  In [20260705000000_booking_verification.sql](file:///c:/Users/Shyam/Desktop/cleanconnect/src/supabase/migrations/20260705000000_booking_verification.sql#L204-L206), updated the database function `verify_booking_code` to check if `v_scheduled_start` resolves to `NULL`. If it does, the function immediately returns `success: false` and message `'Invalid scheduled service date or time.'` to handle malformed or missing date/time values:
++  ```sql
++  v_scheduled_start := (v_booking_record.service_date + v_booking_record.service_time) AT TIME ZONE 'Asia/Kolkata';
++  
++  IF v_scheduled_start IS NULL THEN
++      RETURN jsonb_build_object('success', false, 'message', 'Invalid scheduled service date or time.');
++  END IF;
++  ```
++
++### 3. Database Migration Applied
++* Re-applied the updated migration SQL directly to the active Supabase project database (`pqxqqgccpzjjiclaxbmb`) using the `execute_sql` MCP tool. The query executed successfully with no errors.
++
++### 4. Code Quality & Linter Run
++* Executed `npm run lint` to verify project code style. The linter ran successfully, reporting `0 errors` (only minor unused import/catch warning messages).
++
++### 5. Git Commit
++* All changes have been staged and committed to git with the commit message:
++  `Implement fixes for Task 2: update notifications recipient, check v_scheduled_start is not null in SQL`
+diff --git a/.superpowers/sdd/test_query.sql b/.superpowers/sdd/test_query.sql
+index 23ef1b8..a8af5c9 100644
+--- a/.superpowers/sdd/test_query.sql
++++ b/.superpowers/sdd/test_query.sql
+@@ -19,22 +19,22 @@ BEGIN
+     v_dist := calculate_distance(12.9716, 77.5946, 12.9720, 77.5950);
+     RAISE NOTICE 'Distance (expected ~60-70m): % meters', v_dist;
+     IF v_dist < 50 OR v_dist > 100 THEN
+         RAISE EXCEPTION 'calculate_distance failed: got %', v_dist;
+     END IF;
+ 
+     -- Setup mock booking coordinates and scheduled time for tests
+     UPDATE bookings 
+     SET latitude = 12.9716,
+         longitude = 77.5946,
+-        service_date = CURRENT_DATE,
+-        service_time = CURRENT_TIME,
++        service_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::DATE,
++        service_time = (NOW() AT TIME ZONE 'Asia/Kolkata')::TIME,
+         hours = 2,
+         status = 'arrived', -- Default to arrived for start code verification
+         worker_id = '9191e180-e92c-4416-b1dd-8c063f070c52'
+     WHERE id = v_booking_id;
+ 
+     -- Clear old codes and logs for this booking first
+     DELETE FROM booking_verification_codes WHERE booking_id = v_booking_id;
+     DELETE FROM activity_logs WHERE entity_id = v_booking_id;
+ 
+     -- Test 2: verify_booking_code - invalid code
+@@ -60,20 +60,46 @@ BEGIN
+     RAISE NOTICE 'Distance limit result: %', v_res;
+     IF (v_res->>'success')::boolean = true OR (v_res->>'message') NOT LIKE 'You must be within 100 meters%' THEN
+         RAISE EXCEPTION 'Test 3 failed: expected failure for distance limit';
+     END IF;
+ 
+     SELECT * INTO v_log FROM activity_logs WHERE entity_id = v_booking_id AND action = 'verification_failed' AND metadata->>'error' = 'Distance limit exceeded';
+     IF v_log IS NULL THEN
+         RAISE EXCEPTION 'Test 3 failed: activity log not found for distance limit';
+     END IF;
+ 
++    -- Test 3a: verify_booking_code - distance check skipped when cleaner coordinates are NULL
++    -- Calling with NULL cleaner coordinates should skip distance check and succeed
++    v_res := verify_booking_code(v_booking_id, '123456', NULL, NULL);
++    RAISE NOTICE 'NULL cleaner coordinates result (expected success): %', v_res;
++    IF (v_res->>'success')::boolean = false OR (v_res->>'message') != 'Verification successful.' THEN
++        RAISE EXCEPTION 'Test 3a failed: expected success when skipping distance check';
++    END IF;
++
++    -- Verify that gps_missing log was created
++    SELECT * INTO v_log FROM activity_logs WHERE entity_id = v_booking_id AND action = 'gps_missing';
++    IF v_log IS NULL OR (v_log.metadata->>'gps_missing')::boolean = false THEN
++        RAISE EXCEPTION 'Test 3a failed: gps_missing log not found or incorrect metadata';
++    END IF;
++
++    -- Verify database check_in details are null
++    IF NOT EXISTS (SELECT 1 FROM bookings WHERE id = v_booking_id AND status = 'started' AND check_in_lat IS NULL AND check_in_lng IS NULL) THEN
++        RAISE EXCEPTION 'Test 3a failed: booking check-in coordinates should be null';
++    END IF;
++
++    -- Re-insert code and restore booking status to arrived for subsequent tests
++    DELETE FROM booking_verification_codes WHERE booking_id = v_booking_id;
++    INSERT INTO booking_verification_codes (booking_id, hashed_code, expiry_time, code_type)
++    VALUES (v_booking_id, encode(digest('123456', 'sha256'), 'hex'), NOW() + interval '10 minutes', 'start')
++    RETURNING id INTO v_code_id;
++    UPDATE bookings SET status = 'arrived', check_in_time = NULL, check_in_lat = NULL, check_in_lng = NULL WHERE id = v_booking_id;
++
+     -- Test 4: verify_booking_code - expired code
+     -- Set expiry to past
+     UPDATE booking_verification_codes SET expiry_time = NOW() - interval '1 minute' WHERE id = v_code_id;
+ 
+     v_res := verify_booking_code(v_booking_id, '123456', 12.9716, 77.5946);
+     RAISE NOTICE 'Expired code result: %', v_res;
+     IF (v_res->>'success')::boolean = true OR (v_res->>'message') != 'The code has expired.' THEN
+         RAISE EXCEPTION 'Test 4 failed: expected failure for expired code';
+     END IF;
+ 
+@@ -101,21 +127,21 @@ BEGIN
+     IF (v_res->>'success')::boolean = true OR (v_res->>'message') NOT LIKE 'You can only start%' THEN
+         RAISE EXCEPTION 'Test 5 failed: expected failure for outside window';
+     END IF;
+ 
+     SELECT * INTO v_log FROM activity_logs WHERE entity_id = v_booking_id AND action = 'verification_failed' AND metadata->>'error' = 'Outside scheduled window';
+     IF v_log IS NULL THEN
+         RAISE EXCEPTION 'Test 5 failed: activity log not found for outside window';
+     END IF;
+ 
+     -- Restore service date
+-    UPDATE bookings SET service_date = CURRENT_DATE WHERE id = v_booking_id;
++    UPDATE bookings SET service_date = (NOW() AT TIME ZONE 'Asia/Kolkata')::DATE WHERE id = v_booking_id;
+ 
+     -- Test 6: verify_booking_code - booking status check (must be arrived to start)
+     UPDATE bookings SET status = 'accepted' WHERE id = v_booking_id;
+     v_res := verify_booking_code(v_booking_id, '123456', 12.9716, 77.5946);
+     RAISE NOTICE 'Booking status check result (start): %', v_res;
+     IF (v_res->>'success')::boolean = true OR (v_res->>'message') NOT LIKE 'Booking status must be arrived%' THEN
+         RAISE EXCEPTION 'Test 6 failed: expected failure since status is accepted, not arrived';
+     END IF;
+ 
+     -- Restore status to arrived
+diff --git a/package-lock.json b/package-lock.json
+index cb6d3d1..9203168 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -3,65 +3,41 @@
+   "version": "0.0.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "cleanconnect",
+       "version": "0.0.0",
+       "dependencies": {
+         "@hookform/resolvers": "^5.4.0",
+         "@supabase/supabase-js": "^2.110.0",
++        "framer-motion": "^12.42.2",
+         "leaflet": "^1.9.4",
+         "lucide-react": "^1.23.0",
+         "react": "^19.2.7",
+         "react-dom": "^19.2.7",
+         "react-hook-form": "^7.80.0",
+         "react-hot-toast": "^2.6.0",
+         "react-leaflet": "^5.0.0",
+         "react-router-dom": "^7.18.1",
+         "recharts": "^3.9.2",
+         "zod": "^4.4.3",
+         "zustand": "^5.0.14"
+       },
+       "devDependencies": {
+         "@types/react": "^19.2.17",
+         "@types/react-dom": "^19.2.3",
+         "@vitejs/plugin-react": "^6.0.3",
+         "oxlint": "^1.71.0",
+         "vite": "^8.1.1"
+       }
+     },
+-    "node_modules/@emnapi/core": {
+-      "version": "1.11.1",
+-      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.11.1.tgz",
+-      "integrity": "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true,
+-      "dependencies": {
+-        "@emnapi/wasi-threads": "1.2.2",
+-        "tslib": "^2.4.0"
+-      }
+-    },
+-    "node_modules/@emnapi/runtime": {
+-      "version": "1.11.1",
+-      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.1.tgz",
+-      "integrity": "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true,
+-      "peer": true,
+-      "dependencies": {
+-        "tslib": "^2.4.0"
+-      }
+-    },
+     "node_modules/@emnapi/wasi-threads": {
+       "version": "1.2.2",
+       "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz",
+       "integrity": "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==",
+       "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+         "tslib": "^2.4.0"
+       }
+@@ -1147,20 +1123,47 @@
+       },
+       "peerDependencies": {
+         "picomatch": "^3 || ^4"
+       },
+       "peerDependenciesMeta": {
+         "picomatch": {
+           "optional": true
+         }
+       }
+     },
++    "node_modules/framer-motion": {
++      "version": "12.42.2",
++      "resolved": "https://registry.npmjs.org/framer-motion/-/framer-motion-12.42.2.tgz",
++      "integrity": "sha512-5XY9luDiu0oHfHBjpDthFMh0ES+122w6p/papSJBweMkO8Sn+PW2QaEgRblQBpWFnuvZS5qvarpt/hO2pjGmnw==",
++      "license": "MIT",
++      "dependencies": {
++        "motion-dom": "^12.42.2",
++        "motion-utils": "^12.39.0",
++        "tslib": "^2.4.0"
++      },
++      "peerDependencies": {
++        "@emotion/is-prop-valid": "*",
++        "react": "^18.0.0 || ^19.0.0",
++        "react-dom": "^18.0.0 || ^19.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@emotion/is-prop-valid": {
++          "optional": true
++        },
++        "react": {
++          "optional": true
++        },
++        "react-dom": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/fsevents": {
+       "version": "2.3.3",
+       "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+       "dev": true,
+       "hasInstallScript": true,
+       "license": "MIT",
+       "optional": true,
+       "os": [
+         "darwin"
+@@ -1185,21 +1188,20 @@
+       "license": "MIT",
+       "engines": {
+         "node": ">=20.0.0"
+       }
+     },
+     "node_modules/immer": {
+       "version": "11.1.11",
+       "resolved": "https://registry.npmjs.org/immer/-/immer-11.1.11.tgz",
+       "integrity": "sha512-qzXuyXAkPySAGYkfsAwodDPWT8Zm7/Uo5BNt4BjhMhG5WlWyZZ4wQqnWwdS8kjlQ1Cwu6gjw3A6+0gTQwlyYtw==",
+       "license": "MIT",
+-      "peer": true,
+       "funding": {
+         "type": "opencollective",
+         "url": "https://opencollective.com/immer"
+       }
+     },
+     "node_modules/internmap": {
+       "version": "2.0.3",
+       "resolved": "https://registry.npmjs.org/internmap/-/internmap-2.0.3.tgz",
+       "integrity": "sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==",
+       "license": "ISC",
+@@ -1477,20 +1479,35 @@
+     },
+     "node_modules/lucide-react": {
+       "version": "1.23.0",
+       "resolved": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.23.0.tgz",
+       "integrity": "sha512-38BpJcD0JhFosxHApP/BYsBetLpQFRoTRzEzstM/XCc3jsAG7wqaY1lgVwxiUe3xqYE+lNxo2PkCmYwXWrwwIw==",
+       "license": "ISC",
+       "peerDependencies": {
+         "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
+       }
+     },
++    "node_modules/motion-dom": {
++      "version": "12.42.2",
++      "resolved": "https://registry.npmjs.org/motion-dom/-/motion-dom-12.42.2.tgz",
++      "integrity": "sha512-5gIMWLp/PycBtJRJWRgjxke5n8dlvkSn2DrYW+tr3XcqAZY1xZh6BJyooJXCM8wdfM7wfMjkBJNLge1CKPUIRA==",
++      "license": "MIT",
++      "dependencies": {
++        "motion-utils": "^12.39.0"
++      }
++    },
++    "node_modules/motion-utils": {
++      "version": "12.39.0",
++      "resolved": "https://registry.npmjs.org/motion-utils/-/motion-utils-12.39.0.tgz",
++      "integrity": "sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==",
++      "license": "MIT"
++    },
+     "node_modules/nanoid": {
+       "version": "3.3.15",
+       "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
+       "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
+       "dev": true,
+       "funding": [
+         {
+           "type": "github",
+           "url": "https://github.com/sponsors/ai"
+         }
+@@ -1877,21 +1894,20 @@
+       "version": "2.8.1",
+       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+       "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+       "license": "0BSD"
+     },
+     "node_modules/use-sync-external-store": {
+       "version": "1.6.0",
+       "resolved": "https://registry.npmjs.org/use-sync-external-store/-/use-sync-external-store-1.6.0.tgz",
+       "integrity": "sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==",
+       "license": "MIT",
+-      "peer": true,
+       "peerDependencies": {
+         "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
+       }
+     },
+     "node_modules/victory-vendor": {
+       "version": "37.3.6",
+       "resolved": "https://registry.npmjs.org/victory-vendor/-/victory-vendor-37.3.6.tgz",
+       "integrity": "sha512-SbPDPdDBYp+5MJHhBCAyI7wKM3d5ivekigc2Dk2s7pgbZ9wIgIBYGVw4zGHBml/qTFbexrofXW6Gu4noGxrOwQ==",
+       "license": "MIT AND ISC",
+       "dependencies": {
+diff --git a/package.json b/package.json
+index a0ed538..7fec849 100644
+--- a/package.json
++++ b/package.json
+@@ -5,20 +5,21 @@
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+     "build": "vite build",
+     "lint": "oxlint",
+     "preview": "vite preview"
+   },
+   "dependencies": {
+     "@hookform/resolvers": "^5.4.0",
+     "@supabase/supabase-js": "^2.110.0",
++    "framer-motion": "^12.42.2",
+     "leaflet": "^1.9.4",
+     "lucide-react": "^1.23.0",
+     "react": "^19.2.7",
+     "react-dom": "^19.2.7",
+     "react-hook-form": "^7.80.0",
+     "react-hot-toast": "^2.6.0",
+     "react-leaflet": "^5.0.0",
+     "react-router-dom": "^7.18.1",
+     "recharts": "^3.9.2",
+     "zod": "^4.4.3",
+diff --git a/src/App.css b/src/App.css
+deleted file mode 100644
+index f90339d..0000000
+--- a/src/App.css
++++ /dev/null
+@@ -1,184 +0,0 @@
+-.counter {
+-  font-size: 16px;
+-  padding: 5px 10px;
+-  border-radius: 5px;
+-  color: var(--accent);
+-  background: var(--accent-bg);
+-  border: 2px solid transparent;
+-  transition: border-color 0.3s;
+-  margin-bottom: 24px;
+-
+-  &:hover {
+-    border-color: var(--accent-border);
+-  }
+-  &:focus-visible {
+-    outline: 2px solid var(--accent);
+-    outline-offset: 2px;
+-  }
+-}
+-
+-.hero {
+-  position: relative;
+-
+-  .base,
+-  .framework,
+-  .vite {
+-    inset-inline: 0;
+-    margin: 0 auto;
+-  }
+-
+-  .base {
+-    width: 170px;
+-    position: relative;
+-    z-index: 0;
+-  }
+-
+-  .framework,
+-  .vite {
+-    position: absolute;
+-  }
+-
+-  .framework {
+-    z-index: 1;
+-    top: 34px;
+-    height: 28px;
+-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
+-      scale(1.4);
+-  }
+-
+-  .vite {
+-    z-index: 0;
+-    top: 107px;
+-    height: 26px;
+-    width: auto;
+-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
+-      scale(0.8);
+-  }
+-}
+-
+-#center {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 25px;
+-  place-content: center;
+-  place-items: center;
+-  flex-grow: 1;
+-
+-  @media (max-width: 1024px) {
+-    padding: 32px 20px 24px;
+-    gap: 18px;
+-  }
+-}
+-
+-#next-steps {
+-  display: flex;
+-  border-top: 1px solid var(--border);
+-  text-align: left;
+-
+-  & > div {
+-    flex: 1 1 0;
+-    padding: 32px;
+-    @media (max-width: 1024px) {
+-      padding: 24px 20px;
+-    }
+-  }
+-
+-  .icon {
+-    margin-bottom: 16px;
+-    width: 22px;
+-    height: 22px;
+-  }
+-
+-  @media (max-width: 1024px) {
+-    flex-direction: column;
+-    text-align: center;
+-  }
+-}
+-
+-#docs {
+-  border-right: 1px solid var(--border);
+-
+-  @media (max-width: 1024px) {
+-    border-right: none;
+-    border-bottom: 1px solid var(--border);
+-  }
+-}
+-
+-#next-steps ul {
+-  list-style: none;
+-  padding: 0;
+-  display: flex;
+-  gap: 8px;
+-  margin: 32px 0 0;
+-
+-  .logo {
+-    height: 18px;
+-  }
+-
+-  a {
+-    color: var(--text-h);
+-    font-size: 16px;
+-    border-radius: 6px;
+-    background: var(--social-bg);
+-    display: flex;
+-    padding: 6px 12px;
+-    align-items: center;
+-    gap: 8px;
+-    text-decoration: none;
+-    transition: box-shadow 0.3s;
+-
+-    &:hover {
+-      box-shadow: var(--shadow);
+-    }
+-    .button-icon {
+-      height: 18px;
+-      width: 18px;
+-    }
+-  }
+-
+-  @media (max-width: 1024px) {
+-    margin-top: 20px;
+-    flex-wrap: wrap;
+-    justify-content: center;
+-
+-    li {
+-      flex: 1 1 calc(50% - 8px);
+-    }
+-
+-    a {
+-      width: 100%;
+-      justify-content: center;
+-      box-sizing: border-box;
+-    }
+-  }
+-}
+-
+-#spacer {
+-  height: 88px;
+-  border-top: 1px solid var(--border);
+-  @media (max-width: 1024px) {
+-    height: 48px;
+-  }
+-}
+-
+-.ticks {
+-  position: relative;
+-  width: 100%;
+-
+-  &::before,
+-  &::after {
+-    content: '';
+-    position: absolute;
+-    top: -4.5px;
+-    border: 5px solid transparent;
+-  }
+-
+-  &::before {
+-    left: 0;
+-    border-left-color: var(--border);
+-  }
+-  &::after {
+-    right: 0;
+-    border-right-color: var(--border);
+-  }
+-}
+diff --git a/src/App.jsx b/src/App.jsx
+index 52542b5..532a983 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -42,20 +42,25 @@ import Settings from './pages/shared/Settings'
+ import AdminDashboard from './pages/admin/Dashboard'
+ import UserManagement from './pages/admin/UserManagement'
+ import WorkerManagement from './pages/admin/WorkerManagement'
+ import HomeOwnerManagement from './pages/admin/HomeOwnerManagement'
+ import SubscriptionManagement from './pages/admin/SubscriptionManagement'
+ import PaymentManagement from './pages/admin/PaymentManagement'
+ import LocationManagement from './pages/admin/LocationManagement'
+ import ComplaintManagement from './pages/admin/ComplaintManagement'
+ import NotificationManagement from './pages/admin/NotificationManagement'
+ import SystemSettings from './pages/admin/SystemSettings'
++import BookingManagement from './pages/admin/BookingManagement'
++import ServiceCategoryManagement from './pages/admin/ServiceCategoryManagement'
++import ReviewManagement from './pages/admin/ReviewManagement'
++import RolesPermissionsManagement from './pages/admin/RolesPermissionsManagement'
++import BackupRetentionManagement from './pages/admin/BackupRetentionManagement'
+ 
+ // Error pages
+ import NotFound from './pages/errors/NotFound'
+ 
+ import './styles/globals.css'
+ 
+ function App() {
+   const { theme } = useAppStore()
+ 
+   useEffect(() => {
+@@ -120,25 +125,30 @@ function App() {
+             <Route path="/worker/notifications" element={<Notifications />} />
+             <Route path="/worker/settings" element={<Settings />} />
+           </Route>
+ 
+           {/* Admin Routes */}
+           <Route element={<AdminRoute />}>
+             <Route path="/admin/dashboard" element={<AdminDashboard />} />
+             <Route path="/admin/users" element={<UserManagement />} />
+             <Route path="/admin/workers" element={<WorkerManagement />} />
+             <Route path="/admin/homeowners" element={<HomeOwnerManagement />} />
++            <Route path="/admin/bookings" element={<BookingManagement />} />
+             <Route path="/admin/subscriptions" element={<SubscriptionManagement />} />
+             <Route path="/admin/payments" element={<PaymentManagement />} />
+             <Route path="/admin/locations" element={<LocationManagement />} />
++            <Route path="/admin/services" element={<ServiceCategoryManagement />} />
++            <Route path="/admin/reviews" element={<ReviewManagement />} />
+             <Route path="/admin/complaints" element={<ComplaintManagement />} />
+             <Route path="/admin/notifications" element={<NotificationManagement />} />
++            <Route path="/admin/roles-permissions" element={<RolesPermissionsManagement />} />
++            <Route path="/admin/backup-retention" element={<BackupRetentionManagement />} />
+             <Route path="/admin/settings" element={<SystemSettings />} />
+           </Route>
+         </Route>
+ 
+         {/* 404 */}
+         <Route path="*" element={<NotFound />} />
+       </Routes>
+     </BrowserRouter>
+   )
+ }
+diff --git a/src/components/common/WorkerCard.jsx b/src/components/common/WorkerCard.jsx
+index 376eb2b..0648d85 100644
+--- a/src/components/common/WorkerCard.jsx
++++ b/src/components/common/WorkerCard.jsx
+@@ -1,15 +1,17 @@
+ import React from 'react'
+ import { Phone, Star, MessageCircle, Heart, User, CheckCircle2, ShieldAlert } from 'lucide-react'
+ import { formatCurrency, getStatusClass } from '../../utils/helpers'
+ import { formatDistance } from '../../utils/gps'
+ 
++import { motion } from 'framer-motion'
++
+ export default function WorkerCard({
+   worker,
+   distance,
+   isFavorited,
+   onFavoriteToggle,
+   onBook,
+   onViewProfile
+ }) {
+   const {
+     id,
+@@ -41,23 +43,27 @@ export default function WorkerCard({
+   const formatWorkerType = (type) => {
+     switch (type) {
+       case 'home_cleaning': return 'Home Cleaning'
+       case 'office_cleaning': return 'Office Cleaning'
+       case 'both': return 'Home & Office Cleaning'
+       default: return 'Cleaning Worker'
+     }
+   }
+ 
+   return (
+-    <div 
++    <motion.div 
+       className="card glass card-hover" 
+       onClick={() => onViewProfile(id)}
++      whileHover={{ y: -4 }}
++      initial={{ opacity: 0, scale: 0.95 }}
++      animate={{ opacity: 1, scale: 1 }}
++      transition={{ duration: 0.2 }}
+       style={{ 
+         display: 'flex', 
+         flexDirection: 'column', 
+         gap: '0.75rem', 
+         cursor: 'pointer',
+         position: 'relative',
+         overflow: 'hidden'
+       }}
+     >
+       {/* Profile Photo with Overlays */}
+@@ -216,13 +222,13 @@ export default function WorkerCard({
+             style={{ flex: 1 }}
+             onClick={(e) => {
+               e.stopPropagation()
+               onBook(id)
+             }}
+           >
+             Book Now
+           </button>
+         )}
+       </div>
+-    </div>
++    </motion.div>
+   )
+ }
+diff --git a/src/components/layout/AdminLayout.jsx b/src/components/layout/AdminLayout.jsx
+index 2142597..1974b61 100644
+--- a/src/components/layout/AdminLayout.jsx
++++ b/src/components/layout/AdminLayout.jsx
+@@ -1,73 +1,80 @@
+-import React from 'react'
++import React, { useState } from 'react'
+ import { Link, useNavigate, useLocation } from 'react-router-dom'
+-import { Users, ShieldCheck, User, Settings, LogOut, Sun, Moon, MapPin, Sparkles, LayoutDashboard, CreditCard, MessageSquare, Bell } from 'lucide-react'
++import { Users, ShieldCheck, User, Settings, LogOut, Sun, Moon, MapPin, Sparkles, LayoutDashboard, CreditCard, MessageSquare, Bell, Menu, X, Lock, Briefcase, Tag, Star, Database } from 'lucide-react'
+ import { useAuth } from '../../hooks/useAuth'
++import { motion } from 'framer-motion'
+ import { useAppStore } from '../../store/appStore'
+ import { signOut } from '../../services/auth'
+ 
+ export default function AdminLayout({ children }) {
+   const navigate = useNavigate()
+   const loc = useLocation()
+   const { user } = useAuth()
+   const { theme, toggleTheme } = useAppStore()
++  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+ 
+   const handleLogout = async () => {
+     try {
+       await signOut()
+       navigate('/auth')
+     } catch (err) {
+       console.error(err)
+     }
+   }
+ 
+   const navItems = [
+     { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+     { label: 'User Directory', path: '/admin/users', icon: Users },
+     { label: 'Verified Workers', path: '/admin/workers', icon: ShieldCheck },
+     { label: 'Home Owners', path: '/admin/homeowners', icon: User },
++    { label: 'Platform Bookings', path: '/admin/bookings', icon: Briefcase },
+     { label: 'Payment Logs', path: '/admin/payments', icon: CreditCard },
+     { label: 'Geo Locations', path: '/admin/locations', icon: MapPin },
++    { label: 'Service Catalog', path: '/admin/services', icon: Tag },
++    { label: 'Review Moderation', path: '/admin/reviews', icon: Star },
+     { label: 'User Complaints', path: '/admin/complaints', icon: MessageSquare },
+     { label: 'Push Broadcast', path: '/admin/notifications', icon: Bell },
++    { label: 'Roles & Access', path: '/admin/roles-permissions', icon: Lock },
++    { label: 'Backup & Retention', path: '/admin/backup-retention', icon: Database },
+     { label: 'System Config', path: '/admin/settings', icon: Settings },
+   ]
+ 
+   return (
+-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)' }}>
++    <div className="app-layout">
++      {/* Mobile Sidebar Overlay */}
++      <div 
++        className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`}
++        onClick={() => setIsSidebarOpen(false)}
++      />
++
+       {/* Admin Sidebar */}
+-      <aside className="glass" style={{
+-        width: '260px',
+-        padding: '2rem 1.5rem',
+-        display: 'flex',
+-        flexDirection: 'column',
+-        gap: '2rem',
+-        borderRight: '1px solid var(--border-glass)',
+-        position: 'sticky',
+-        top: 0,
+-        height: '100vh',
+-        zIndex: 10
+-      }}>
+-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
+-          <div style={{
+-            background: 'var(--gradient-primary)',
+-            padding: '8px',
+-            borderRadius: '12px',
+-            display: 'flex',
+-            color: 'white'
+-          }}>
+-            <Sparkles size={24} />
+-          </div>
+-          <div>
+-            <h1 style={{ fontSize: '1.25rem', fontWeight: 800 }}>CleanConnect</h1>
+-            <span style={{ fontSize: '10px', color: '#ef4444', fontWeight: 700, letterSpacing: '0.1em' }}>SYS ADMIN</span>
++      <aside className={`app-sidebar glass ${isSidebarOpen ? 'open' : ''}`}>
++        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
++            <div style={{
++              background: 'var(--gradient-primary)',
++              padding: '8px',
++              borderRadius: '12px',
++              display: 'flex',
++              color: 'white'
++            }}>
++              <Sparkles size={24} />
++            </div>
++            <div>
++              <h1 style={{ fontSize: '1.25rem', fontWeight: 800 }}>CleanConnect</h1>
++              <span style={{ fontSize: '10px', color: '#ef4444', fontWeight: 700, letterSpacing: '0.1em' }}>SYS ADMIN</span>
++            </div>
+           </div>
++          <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ display: 'flex', border: 'none', background: 'transparent', padding: '0.5rem' }}>
++            <X size={20} className="md-hidden" />
++          </button>
+         </div>
+ 
+         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+           {navItems.map((item, idx) => {
+             const Icon = item.icon
+             const isActive = loc.pathname === item.path
+             return (
+               <Link 
+                 key={idx} 
+                 to={item.path}
+@@ -91,37 +98,48 @@ export default function AdminLayout({ children }) {
+             <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+           </button>
+           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
+             <LogOut size={16} />
+             <span>Logout</span>
+           </button>
+         </div>
+       </aside>
+ 
+       {/* Main Area */}
+-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+-        <header className="glass" style={{
++      <div className="app-main">
++        <header className="glass app-header" style={{
+           height: '70px',
+           display: 'flex',
+           alignItems: 'center',
+-          justifyContent: 'flex-end',
++          justifyContent: 'space-between',
+           padding: '0 2rem',
+           borderBottom: '1px solid var(--border-glass)',
+           position: 'sticky',
+           top: 0,
+           zIndex: 9
+         }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
++            <button className="menu-toggle" onClick={() => setIsSidebarOpen(true)}>
++              <Menu size={24} />
++            </button>
++          </div>
+           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+             <div style={{ textAlign: 'right' }}>
+               <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Admin Session</h4>
+               <span style={{ fontSize: '11px', color: '#ef4444' }}>Superuser privilege</span>
+             </div>
+           </div>
+         </header>
+ 
+-        <main style={{ padding: '2rem', flex: 1 }}>
++        <motion.main 
++          style={{ padding: '2rem', flex: 1, overflowY: 'auto' }}
++          initial={{ opacity: 0, y: 10 }}
++          animate={{ opacity: 1, y: 0 }}
++          exit={{ opacity: 0, y: -10 }}
++          transition={{ duration: 0.3 }}
++        >
+           {children}
+-        </main>
++        </motion.main>
+       </div>
+     </div>
+   )
+ }
+diff --git a/src/components/layout/HomeOwnerLayout.jsx b/src/components/layout/HomeOwnerLayout.jsx
+index 377b5d3..cf8a71e 100644
+--- a/src/components/layout/HomeOwnerLayout.jsx
++++ b/src/components/layout/HomeOwnerLayout.jsx
+@@ -1,24 +1,27 @@
+ import React, { useEffect, useState } from 'react'
+ import { Link, useNavigate, useLocation } from 'react-router-dom'
+-import { Home, Calendar, Heart, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, MapPin } from 'lucide-react'
++import { Home, Calendar, Heart, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, MapPin, Menu, X } from 'lucide-react'
+ import { useAuth } from '../../hooks/useAuth'
++import { motion } from 'framer-motion'
+ import { useAppStore } from '../../store/appStore'
+ import { getUnreadNotificationCount, subscribeToNotifications } from '../../services/notifications'
+ import { signOut } from '../../services/auth'
+ 
+ export default function HomeOwnerLayout({ children }) {
+   const navigate = useNavigate()
+   const loc = useLocation()
+   const { homeowner, user } = useAuth()
+   const { theme, toggleTheme } = useAppStore()
+   const [unread, setUnread] = useState(0)
++  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
++  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+ 
+   useEffect(() => {
+     if (!user) return
+ 
+     // Load initial count
+     getUnreadNotificationCount(user.id).then(setUnread)
+ 
+     // Listen to changes realtime
+     const channel = subscribeToNotifications(user.id, () => {
+       setUnread((prev) => prev + 1)
+@@ -31,61 +34,71 @@ export default function HomeOwnerLayout({ children }) {
+ 
+   const handleLogout = async () => {
+     try {
+       await signOut()
+       navigate('/auth')
+     } catch (err) {
+       console.error(err)
+     }
+   }
+ 
+-  const navItems = [
++  const allNavItems = [
+     { label: 'Find Cleaners', path: '/homeowner/dashboard', icon: Home },
+-    { label: 'Booking History', path: '/homeowner/bookings', icon: Calendar },
++    { label: 'Bookings', path: '/homeowner/bookings', icon: Calendar },
+     { label: 'Favourites', path: '/homeowner/favourites', icon: Heart },
+-    { label: 'Notifications', path: '/homeowner/notifications', icon: Bell, badge: unread },
++    { label: 'Alerts', path: '/homeowner/notifications', icon: Bell, badge: unread },
+     { label: 'Profile Settings', path: '/homeowner/profile', icon: User },
+   ]
++  const bottomNavItems = [
++    allNavItems[0], // Find Cleaners
++    allNavItems[1], // Bookings
++    allNavItems[3], // Alerts
++  ]
++  const profileNavItems = [
++    allNavItems[2], // Favourites
++    allNavItems[4], // Profile Settings
++  ]
+ 
+   return (
+-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+-      {/* Sidebar for Desktop */}
+-      <aside className="glass" style={{
+-        width: '260px',
+-        padding: '2rem 1.5rem',
+-        display: 'flex',
+-        flexDirection: 'column',
+-        gap: '2rem',
+-        borderRight: '1px solid var(--border-glass)',
+-        position: 'sticky',
+-        top: 0,
+-        height: '100vh',
+-        zIndex: 10
+-      }}>
+-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
+-          <div style={{
+-            background: 'var(--gradient-primary)',
+-            padding: '8px',
+-            borderRadius: '12px',
+-            display: 'flex',
+-            color: 'white'
+-          }}>
+-            <Sparkles size={24} />
+-          </div>
+-          <div>
+-            <h1 style={{ fontSize: '1.25rem', fontWeight: 800, tracking: '-0.05em' }}>CleanConnect</h1>
+-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em' }}>HOMEOWNER</span>
++    <div className="app-layout">
++      {/* Mobile Sidebar Overlay */}
++      <div 
++        className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`}
++        onClick={() => setIsSidebarOpen(false)}
++      />
++
++      {/* Sidebar */}
++      <aside className={`app-sidebar glass ${isSidebarOpen ? 'open' : ''}`}>
++        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
++            <div style={{
++              background: 'var(--gradient-primary)',
++              padding: '8px',
++              borderRadius: '12px',
++              display: 'flex',
++              color: 'white'
++            }}>
++              <Sparkles size={24} />
++            </div>
++            <div>
++              <h1 style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.05em' }}>CleanConnect</h1>
++              <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em' }}>HOMEOWNER</span>
++            </div>
+           </div>
++          {/* Close button for mobile inside sidebar */}
++          <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ display: 'flex', border: 'none', background: 'transparent', padding: '0.5rem' }}>
++            <X size={20} className="md-hidden" />
++          </button>
+         </div>
+ 
+         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+-          {navItems.map((item, idx) => {
++          {allNavItems.map((item, idx) => {
+             const Icon = item.icon
+             const isActive = loc.pathname === item.path
+             return (
+               <Link 
+                 key={idx} 
+                 to={item.path}
+                 className="btn btn-ghost"
+                 style={{ 
+                   justifyContent: 'flex-start',
+                   background: isActive ? 'var(--primary-light)' : 'transparent',
+@@ -124,56 +137,155 @@ export default function HomeOwnerLayout({ children }) {
+             <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+           </button>
+           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
+             <LogOut size={16} />
+             <span>Logout</span>
+           </button>
+         </div>
+       </aside>
+ 
+       {/* Main Content Area */}
+-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
++      <div className="app-main">
+         {/* Top Navbar */}
+-        <header className="glass" style={{
+-          height: '70px',
++        <header className="glass app-header" style={{
++          height: '60px',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'space-between',
+-          padding: '0 2rem',
++          padding: '0 1rem',
+           borderBottom: '1px solid var(--border-glass)',
+           position: 'sticky',
+           top: 0,
+           zIndex: 9
+         }}>
+-          {/* Location indicator */}
++          {/* Left section: Location */}
+           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+-            <MapPin size={18} color="var(--primary)" />
+-            <div style={{ display: 'flex', flexDirection: 'column' }}>
+-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>CURRENT LOCATION</span>
+-              <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+-                {homeowner?.society_name || homeowner?.area_id || 'Detecting location...'}
+-              </span>
++            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', display: 'flex' }}>
++              <div style={{
++                background: 'var(--primary-light)',
++                padding: '6px',
++                borderRadius: '8px',
++                display: 'flex',
++                color: 'var(--primary)'
++              }}>
++                <MapPin size={18} />
++              </div>
++              <div style={{ display: 'flex', flexDirection: 'column' }}>
++                <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>LOCATION</span>
++                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
++                  {homeowner?.society_name || homeowner?.area_id || 'Detecting...'}
++                </span>
++              </div>
+             </div>
+           </div>
+ 
+           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+-            <div style={{ textAlign: 'right' }}>
+-              <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>{homeowner?.full_name}</h4>
+-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{homeowner?.phone}</span>
+-            </div>
+-            {homeowner?.avatar_url ? (
+-              <img src={homeowner.avatar_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+-            ) : (
+-              <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+-                <User size={20} color="var(--primary)" />
++            <div 
++              style={{ display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer', position: 'relative' }}
++              onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
++            >
++              <div style={{ textAlign: 'right' }}>
++                <h4 style={{ fontSize: '0.9rem', fontWeight: 700 }}>{homeowner?.full_name}</h4>
++                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{homeowner?.phone}</span>
+               </div>
+-            )}
++              {homeowner?.avatar_url ? (
++                <img src={homeowner.avatar_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
++              ) : (
++                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
++                  <User size={20} color="var(--primary)" />
++                </div>
++              )}
++
++              {/* Profile Dropdown */}
++              {isProfileMenuOpen && (
++                <div style={{
++                  position: 'absolute',
++                  top: '50px',
++                  right: 0,
++                  width: '200px',
++                  borderRadius: '12px',
++                  padding: '0.5rem',
++                  display: 'flex',
++                  flexDirection: 'column',
++                  gap: '4px',
++                  zIndex: 100,
++                  background: 'var(--bg-primary)',
++                  border: '1px solid var(--border-glass)',
++                  boxShadow: 'var(--shadow-lg)'
++                }}>
++                  {profileNavItems.map((item, i) => {
++                    const Icon = item.icon
++                    return (
++                      <Link key={i} to={item.path} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
++                        <Icon size={16} />
++                        <span>{item.label}</span>
++                      </Link>
++                    )
++                  })}
++                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
++                  <button onClick={toggleTheme} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
++                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
++                    <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
++                  </button>
++                  <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--danger)' }}>
++                    <LogOut size={16} />
++                    <span>Logout</span>
++                  </button>
++                </div>
++              )}
++            </div>
+           </div>
+         </header>
+ 
+-        <main style={{ padding: '2rem', flex: 1 }}>
++        <motion.main 
++          style={{ flex: 1, padding: '1.25rem', overflowY: 'auto' }}
++          initial={{ opacity: 0, y: 10 }}
++          animate={{ opacity: 1, y: 0 }}
++          exit={{ opacity: 0, y: -10 }}
++          transition={{ duration: 0.3 }}
++        >
+           {children}
+-        </main>
++        </motion.main>
+       </div>
++
++      {/* Mobile Bottom Navigation */}
++      <nav className="mobile-bottom-nav">
++        {bottomNavItems.map((item, idx) => {
++          const Icon = item.icon
++          const isActive = loc.pathname === item.path
++          return (
++            <Link 
++              key={idx} 
++              to={item.path}
++              className={`bottom-nav-item ${isActive ? 'active' : ''}`}
++            >
++              <div className="icon-container">
++                <Icon size={20} />
++                {item.badge > 0 && (
++                  <span style={{
++                    position: 'absolute',
++                    top: '2px',
++                    right: '12px',
++                    background: 'var(--danger)',
++                    color: 'white',
++                    fontSize: '9px',
++                    fontWeight: 700,
++                    borderRadius: '50%',
++                    minWidth: '16px',
++                    height: '16px',
++                    display: 'flex',
++                    alignItems: 'center',
++                    justifyContent: 'center',
++                    border: '2px solid var(--bg-glass)'
++                  }}>
++                    {item.badge}
++                  </span>
++                )}
++              </div>
++              <span>{item.label.split(' ')[0]}</span>
++            </Link>
++          )
++        })}
++      </nav>
+     </div>
+   )
+ }
+diff --git a/src/components/layout/WorkerLayout.jsx b/src/components/layout/WorkerLayout.jsx
+index 28bdc74..d0a6e1e 100644
+--- a/src/components/layout/WorkerLayout.jsx
++++ b/src/components/layout/WorkerLayout.jsx
+@@ -1,26 +1,29 @@
+ import React, { useEffect, useState } from 'react'
+ import { Link, useNavigate, useLocation } from 'react-router-dom'
+-import { Home, ClipboardList, Briefcase, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, AlertCircle } from 'lucide-react'
++import { Home, ClipboardList, Briefcase, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, AlertCircle, Menu, X } from 'lucide-react'
+ import { useAuth } from '../../hooks/useAuth'
++import { motion } from 'framer-motion'
+ import { useAppStore } from '../../store/appStore'
+ import { getUnreadNotificationCount, subscribeToNotifications } from '../../services/notifications'
+ import { updateWorkerAvailability } from '../../services/workers'
+ import { signOut } from '../../services/auth'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function WorkerLayout({ children }) {
+   const navigate = useNavigate()
+   const loc = useLocation()
+   const { worker, user, refreshProfile } = useAuth()
+   const { theme, toggleTheme } = useAppStore()
+   const [unread, setUnread] = useState(0)
++  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
++  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+   const [isAvailable, setIsAvailable] = useState(worker?.is_available || false)
+ 
+   useEffect(() => {
+     if (worker) {
+       setIsAvailable(worker.is_available)
+     }
+   }, [worker])
+ 
+   useEffect(() => {
+     if (!user) return
+@@ -54,79 +57,81 @@ export default function WorkerLayout({ children }) {
+         status: nextVal ? 'available' : 'offline'
+       })
+       setIsAvailable(nextVal)
+       toast.success(nextVal ? 'You are now online & visible!' : 'You are offline')
+       await refreshProfile()
+     } catch (err) {
+       toast.error('Failed to update availability')
+     }
+   }
+ 
+-  const navItems = [
++  const allNavItems = [
+     { label: 'Dashboard', path: '/worker/dashboard', icon: Home },
+-    { label: 'Booking Requests', path: '/worker/requests', icon: ClipboardList },
+-    { label: 'Upcoming Jobs', path: '/worker/upcoming', icon: Briefcase },
+-    { label: 'Notifications', path: '/worker/notifications', icon: Bell, badge: unread },
++    { label: 'Requests', path: '/worker/requests', icon: ClipboardList },
++    { label: 'Upcoming', path: '/worker/upcoming', icon: Briefcase },
++    { label: 'Alerts', path: '/worker/notifications', icon: Bell, badge: unread },
+     { label: 'Subscriptions', path: '/worker/subscription', icon: Settings },
+     { label: 'My Profile', path: '/worker/profile', icon: User },
+   ]
++  const bottomNavItems = allNavItems.slice(0, 4)
++  const profileNavItems = allNavItems.slice(4)
+ 
+   return (
+-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+-      {/* Sidebar for Desktop */}
+-      <aside className="glass" style={{
+-        width: '260px',
+-        padding: '2rem 1.5rem',
+-        display: 'flex',
+-        flexDirection: 'column',
+-        gap: '2rem',
+-        borderRight: '1px solid var(--border-glass)',
+-        position: 'sticky',
+-        top: 0,
+-        height: '100vh',
+-        zIndex: 10
+-      }}>
+-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
+-          <div style={{
+-            background: 'var(--gradient-primary)',
+-            padding: '8px',
+-            borderRadius: '12px',
+-            display: 'flex',
+-            color: 'white'
+-          }}>
+-            <Sparkles size={24} />
+-          </div>
+-          <div>
+-            <h1 style={{ fontSize: '1.25rem', fontWeight: 800 }}>CleanConnect</h1>
+-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em' }}>WORKER PRO</span>
++    <div className="app-layout">
++      {/* Mobile Sidebar Overlay */}
++      <div 
++        className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`}
++        onClick={() => setIsSidebarOpen(false)}
++      />
++
++      {/* Sidebar */}
++      <aside className={`app-sidebar glass ${isSidebarOpen ? 'open' : ''}`}>
++        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.5rem' }}>
++            <div style={{
++              background: 'var(--gradient-primary)',
++              padding: '8px',
++              borderRadius: '12px',
++              display: 'flex',
++              color: 'white'
++            }}>
++              <Sparkles size={24} />
++            </div>
++            <div>
++              <h1 style={{ fontSize: '1.25rem', fontWeight: 800 }}>CleanConnect</h1>
++              <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em' }}>WORKER PRO</span>
++            </div>
+           </div>
++          <button className="menu-toggle" onClick={() => setIsSidebarOpen(false)} style={{ display: 'flex', border: 'none', background: 'transparent', padding: '0.5rem' }}>
++            <X size={20} className="md-hidden" />
++          </button>
+         </div>
+ 
+         {/* Availability Quick Switch */}
+         <div className="card glass" style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+             <span style={{ fontSize: '12px', fontWeight: 700 }}>Duty Status</span>
+             <span className={`badge ${isAvailable ? 'badge-verified' : 'badge-danger'}`} style={{ fontSize: '9px' }}>
+               {isAvailable ? 'ONLINE' : 'OFFLINE'}
+             </span>
+           </div>
+           <button 
+             onClick={handleAvailabilityToggle} 
+             className={`btn btn-sm ${isAvailable ? 'btn-danger' : 'btn-primary'}`}
+             style={{ width: '100%' }}
+           >
+             {isAvailable ? 'Go Offline' : 'Go Online'}
+           </button>
+         </div>
+ 
+         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+-          {navItems.map((item, idx) => {
++          {allNavItems.map((item, idx) => {
+             const Icon = item.icon
+             const isActive = loc.pathname === item.path
+             return (
+               <Link 
+                 key={idx} 
+                 to={item.path}
+                 className="btn btn-ghost"
+                 style={{ 
+                   justifyContent: 'flex-start',
+                   background: isActive ? 'var(--primary-light)' : 'transparent',
+@@ -165,54 +170,152 @@ export default function WorkerLayout({ children }) {
+             <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+           </button>
+           <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--danger)' }}>
+             <LogOut size={16} />
+             <span>Logout</span>
+           </button>
+         </div>
+       </aside>
+ 
+       {/* Main Area */}
+-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
++      <div className="app-main">
+         {/* Top Navbar */}
+-        <header className="glass" style={{
+-          height: '70px',
++        <header className="glass app-header" style={{
++          height: '60px',
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'space-between',
+-          padding: '0 2rem',
++          padding: '0 1rem',
+           borderBottom: '1px solid var(--border-glass)',
+           position: 'sticky',
+           top: 0,
+           zIndex: 9
+         }}>
+-          <div>
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
++            <div style={{
++              background: 'var(--primary-light)',
++              padding: '6px',
++              borderRadius: '8px',
++              display: 'flex',
++              color: 'var(--primary)'
++            }}>
++              <Sparkles size={18} />
++            </div>
+             {worker?.verification_status !== 'approved' && (
+-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--warning)', fontSize: '13px', fontWeight: 600 }}>
+-                <AlertCircle size={16} />
+-                <span>Profile Under Verification Review</span>
++              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--warning)', fontSize: '11px', fontWeight: 600 }}>
++                <AlertCircle size={14} />
++                <span>Reviewing</span>
+               </div>
+             )}
+           </div>
+ 
+           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+-            <div style={{ textAlign: 'right' }}>
+-              <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>{worker?.full_name}</h4>
+-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{worker?.worker_type?.replace('_', ' ')}</span>
+-            </div>
+-            {worker?.avatar_url ? (
+-              <img src={worker.avatar_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+-            ) : (
+-              <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+-                <User size={20} color="var(--primary)" />
++            <div 
++              style={{ display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer', position: 'relative' }}
++              onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
++            >
++              <div style={{ textAlign: 'right' }}>
++                <h4 style={{ fontSize: '0.9rem', fontWeight: 700 }}>{worker?.full_name}</h4>
++                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{worker?.worker_type?.replace('_', ' ')}</span>
+               </div>
+-            )}
++              {worker?.avatar_url ? (
++                <img src={worker.avatar_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
++              ) : (
++                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
++                  <User size={20} color="var(--primary)" />
++                </div>
++              )}
++
++              {/* Profile Dropdown */}
++              {isProfileMenuOpen && (
++                <div style={{
++                  position: 'absolute',
++                  top: '50px',
++                  right: 0,
++                  width: '200px',
++                  borderRadius: '12px',
++                  padding: '0.5rem',
++                  display: 'flex',
++                  flexDirection: 'column',
++                  gap: '4px',
++                  zIndex: 100,
++                  background: 'var(--bg-primary)',
++                  border: '1px solid var(--border-glass)',
++                  boxShadow: 'var(--shadow-lg)'
++                }}>
++                  {profileNavItems.map((item, i) => {
++                    const Icon = item.icon
++                    return (
++                      <Link key={i} to={item.path} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
++                        <Icon size={16} />
++                        <span>{item.label}</span>
++                      </Link>
++                    )
++                  })}
++                  <div style={{ height: '1px', background: 'var(--border-glass)', margin: '4px 0' }} />
++                  <button onClick={toggleTheme} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}>
++                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
++                    <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
++                  </button>
++                  <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--danger)' }}>
++                    <LogOut size={16} />
++                    <span>Logout</span>
++                  </button>
++                </div>
++              )}
++            </div>
+           </div>
+         </header>
+ 
+-        <main style={{ padding: '2rem', flex: 1 }}>
++        <motion.main 
++          style={{ padding: '1.25rem', flex: 1, overflowY: 'auto' }}
++          initial={{ opacity: 0, y: 10 }}
++          animate={{ opacity: 1, y: 0 }}
++          exit={{ opacity: 0, y: -10 }}
++          transition={{ duration: 0.3 }}
++        >
+           {children}
+-        </main>
++        </motion.main>
+       </div>
++
++      {/* Mobile Bottom Navigation */}
++      <nav className="mobile-bottom-nav">
++        {bottomNavItems.map((item, idx) => {
++          const Icon = item.icon
++          const isActive = loc.pathname === item.path
++          return (
++            <Link 
++              key={idx} 
++              to={item.path}
++              className={`bottom-nav-item ${isActive ? 'active' : ''}`}
++            >
++              <div className="icon-container">
++                <Icon size={20} />
++                {item.badge > 0 && (
++                  <span style={{
++                    position: 'absolute',
++                    top: '2px',
++                    right: '12px',
++                    background: 'var(--danger)',
++                    color: 'white',
++                    fontSize: '9px',
++                    fontWeight: 700,
++                    borderRadius: '50%',
++                    minWidth: '16px',
++                    height: '16px',
++                    display: 'flex',
++                    alignItems: 'center',
++                    justifyContent: 'center',
++                    border: '2px solid var(--bg-glass)'
++                  }}>
++                    {item.badge}
++                  </span>
++                )}
++              </div>
++              <span>{item.label.split(' ')[0]}</span>
++            </Link>
++          )
++        })}
++      </nav>
+     </div>
+   )
+ }
+diff --git a/src/components/maps/LocationPicker.jsx b/src/components/maps/LocationPicker.jsx
+index f7d12af..e1948bf 100644
+--- a/src/components/maps/LocationPicker.jsx
++++ b/src/components/maps/LocationPicker.jsx
+@@ -1,16 +1,17 @@
+ import React, { useEffect, useState } from 'react'
+ import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
+ import L from 'leaflet'
+ import { Navigation } from 'lucide-react'
+ import { getCurrentPosition, reverseGeocode } from '../../utils/gps'
+ import { toast } from 'react-hot-toast'
++import 'leaflet/dist/leaflet.css'
+ 
+ // Fix default marker icon bug in Leaflet
+ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
+ import markerIcon from 'leaflet/dist/images/marker-icon.png'
+ import markerShadow from 'leaflet/dist/images/marker-shadow.png'
+ 
+ delete L.Icon.Default.prototype._getIconUrl
+ L.Icon.Default.mergeOptions({
+   iconUrl: markerIcon,
+   iconRetinaUrl: markerIcon2x,
+@@ -21,20 +22,32 @@ L.Icon.Default.mergeOptions({
+ function ChangeView({ center }) {
+   const map = useMap()
+   useEffect(() => {
+     if (center) {
+       map.setView(center, 16)
+     }
+   }, [center, map])
+   return null
+ }
+ 
++// Auto resizer component to invalidate Leaflet cache on center change
++function MapResizer({ center }) {
++  const map = useMap()
++  useEffect(() => {
++    const timer = setTimeout(() => {
++      map.invalidateSize()
++    }, 200)
++    return () => clearTimeout(timer)
++  }, [map, center])
++  return null
++}
++
+ // Map events handler to allow pinning by clicking
+ function MapEventsHandler({ onPinLocation }) {
+   useMapEvents({
+     click(e) {
+       onPinLocation(e.latlng.lat, e.latlng.lng)
+     }
+   })
+   return null
+ }
+ 
+@@ -128,20 +141,21 @@ export default function LocationPicker({ lat, lng, onLocationChange }) {
+         <MapContainer 
+           center={center} 
+           zoom={lat && lng ? 16 : 5} 
+           style={{ height: '100%', width: '100%' }}
+         >
+           <TileLayer
+             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+           />
+           <ChangeView center={center} />
++          <MapResizer center={center} />
+           <MapEventsHandler onPinLocation={handleLocationUpdate} />
+           {lat && lng && (
+             <Marker 
+               position={[lat, lng]} 
+               draggable={true}
+               eventHandlers={{ dragend: handleMarkerDragEnd }}
+             />
+           )}
+         </MapContainer>
+       </div>
+diff --git a/src/index.css b/src/index.css
+deleted file mode 100644
+index 2c84af0..0000000
+--- a/src/index.css
++++ /dev/null
+@@ -1,111 +0,0 @@
+-:root {
+-  --text: #6b6375;
+-  --text-h: #08060d;
+-  --bg: #fff;
+-  --border: #e5e4e7;
+-  --code-bg: #f4f3ec;
+-  --accent: #aa3bff;
+-  --accent-bg: rgba(170, 59, 255, 0.1);
+-  --accent-border: rgba(170, 59, 255, 0.5);
+-  --social-bg: rgba(244, 243, 236, 0.5);
+-  --shadow:
+-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+-
+-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+-  --mono: ui-monospace, Consolas, monospace;
+-
+-  font: 18px/145% var(--sans);
+-  letter-spacing: 0.18px;
+-  color-scheme: light dark;
+-  color: var(--text);
+-  background: var(--bg);
+-  font-synthesis: none;
+-  text-rendering: optimizeLegibility;
+-  -webkit-font-smoothing: antialiased;
+-  -moz-osx-font-smoothing: grayscale;
+-
+-  @media (max-width: 1024px) {
+-    font-size: 16px;
+-  }
+-}
+-
+-@media (prefers-color-scheme: dark) {
+-  :root {
+-    --text: #9ca3af;
+-    --text-h: #f3f4f6;
+-    --bg: #16171d;
+-    --border: #2e303a;
+-    --code-bg: #1f2028;
+-    --accent: #c084fc;
+-    --accent-bg: rgba(192, 132, 252, 0.15);
+-    --accent-border: rgba(192, 132, 252, 0.5);
+-    --social-bg: rgba(47, 48, 58, 0.5);
+-    --shadow:
+-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+-  }
+-
+-  #social .button-icon {
+-    filter: invert(1) brightness(2);
+-  }
+-}
+-
+-body {
+-  margin: 0;
+-}
+-
+-#root {
+-  width: 1126px;
+-  max-width: 100%;
+-  margin: 0 auto;
+-  text-align: center;
+-  border-inline: 1px solid var(--border);
+-  min-height: 100svh;
+-  display: flex;
+-  flex-direction: column;
+-  box-sizing: border-box;
+-}
+-
+-h1,
+-h2 {
+-  font-family: var(--heading);
+-  font-weight: 500;
+-  color: var(--text-h);
+-}
+-
+-h1 {
+-  font-size: 56px;
+-  letter-spacing: -1.68px;
+-  margin: 32px 0;
+-  @media (max-width: 1024px) {
+-    font-size: 36px;
+-    margin: 20px 0;
+-  }
+-}
+-h2 {
+-  font-size: 24px;
+-  line-height: 118%;
+-  letter-spacing: -0.24px;
+-  margin: 0 0 8px;
+-  @media (max-width: 1024px) {
+-    font-size: 20px;
+-  }
+-}
+-p {
+-  margin: 0;
+-}
+-
+-code,
+-.counter {
+-  font-family: var(--mono);
+-  display: inline-flex;
+-  border-radius: 4px;
+-  color: var(--text-h);
+-}
+-
+-code {
+-  font-size: 15px;
+-  line-height: 135%;
+-  padding: 4px 8px;
+-  background: var(--code-bg);
+-}
+diff --git a/src/pages/admin/UserManagement.jsx b/src/pages/admin/UserManagement.jsx
+index be727c7..3240b8e 100644
+--- a/src/pages/admin/UserManagement.jsx
++++ b/src/pages/admin/UserManagement.jsx
+@@ -1,46 +1,109 @@
+ import React, { useEffect, useState } from 'react'
+ import AdminLayout from '../../components/layout/AdminLayout'
+ import { supabase } from '../../supabase/client'
+ import { formatDate } from '../../utils/helpers'
+ import { Shield, Ban, Trash2, CheckCircle2 } from 'lucide-react'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function UserManagement() {
+   const [users, setUsers] = useState([])
++  const [roles, setRoles] = useState([])
+   const [loading, setLoading] = useState(true)
+   const [search, setSearch] = useState('')
+ 
+   useEffect(() => {
+-    supabase
+-      .from('users')
+-      .select('*, roles(name)')
+-      .then(({ data }) => setUsers(data || []))
+-      .finally(() => setLoading(false))
++    const loadData = async () => {
++      try {
++        const { data: usersData } = await supabase
++          .from('users')
++          .select('*, roles(*)')
++        setUsers(usersData || [])
++
++        const { data: rolesData } = await supabase
++          .from('roles')
++          .select('*')
++        setRoles(rolesData || [])
++      } catch (err) {
++        console.error(err)
++      } finally {
++        setLoading(false)
++      }
++    }
++    loadData()
+   }, [])
+ 
+   const handleStatusUpdate = async (userId, updateFields) => {
+     try {
+       const { error } = await supabase
+         .from('users')
+         .update(updateFields)
+         .eq('id', userId)
+ 
+       if (error) throw error
+       
+       setUsers(users.map(u => u.id === userId ? { ...u, ...updateFields } : u))
+       toast.success('User privileges updated successfully!')
+     } catch (err) {
+       toast.error('Failed to modify user status')
+     }
+   }
+ 
++  const handleRoleUpdate = async (userId, roleId) => {
++    const targetUser = users.find(u => u.id === userId)
++    if (!targetUser) return
++
++    const targetRole = roles.find(r => r.id === roleId)
++    if (!targetRole) return
++
++    const reason = window.prompt(`Enter reason for updating role of "${targetUser.full_name}" (Security Audit Confirmation):`)
++    if (reason === null) return // Admin cancelled prompt
++    
++    if (!reason.trim()) {
++      toast.error('A security confirmation reason is required to modify user roles.')
++      return
++    }
++
++    try {
++      const { error } = await supabase
++        .from('users')
++        .update({ role_id: roleId })
++        .eq('id', userId)
++
++      if (error) throw error
++
++      // Log activity
++      const { data: { user: adminUser } } = await supabase.auth.getUser()
++      if (adminUser) {
++        await supabase
++          .from('activity_logs')
++          .insert([{
++            user_id: adminUser.id,
++            action: 'UPDATE_ROLE',
++            entity_type: 'user',
++            entity_id: userId,
++            metadata: {
++              reason: reason.trim(),
++              old_role: targetUser.roles?.name || 'none',
++              new_role: targetRole?.name || 'none',
++              user_name: targetUser.full_name
++            }
++          }])
++      }
++
++      setUsers(users.map(u => u.id === userId ? { ...u, role_id: roleId, roles: targetRole } : u))
++      toast.success('User role updated successfully!')
++    } catch (err) {
++      toast.error('Failed to update user role')
++    }
++  }
++
+   const filteredUsers = users.filter(u => 
+     u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+     u.phone?.includes(search) ||
+     u.email?.toLowerCase().includes(search.toLowerCase())
+   )
+ 
+   return (
+     <AdminLayout>
+       <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+         
+@@ -84,22 +147,43 @@ export default function UserManagement() {
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {filteredUsers.map(u => (
+                     <tr key={u.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                       <td style={{ padding: '10px', fontWeight: 700 }}>{u.full_name}</td>
+                       <td style={{ padding: '10px' }}>
+                         <div>{u.phone}</div>
+                         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{u.email || 'No email'}</div>
+                       </td>
+-                      <td style={{ padding: '10px', textTransform: 'uppercase', fontWeight: 700, fontSize: '11px' }}>
+-                        {u.roles?.name}
++                      <td style={{ padding: '10px' }}>
++                        <select 
++                          value={u.role_id || ''} 
++                          onChange={(e) => handleRoleUpdate(u.id, e.target.value)}
++                          className="form-input"
++                          style={{ 
++                            fontSize: '11px', 
++                            fontWeight: 700, 
++                            textTransform: 'uppercase', 
++                            padding: '4px 8px', 
++                            height: 'auto', 
++                            width: 'auto',
++                            background: 'rgba(255,255,255,0.05)',
++                            border: '1px solid var(--border-glass)',
++                            color: 'var(--text-primary)'
++                          }}
++                        >
++                          {roles.map(r => (
++                            <option key={r.id} value={r.id} style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
++                              {r.name}
++                            </option>
++                          ))}
++                        </select>
+                       </td>
+                       <td style={{ padding: '10px' }}>
+                         {u.is_banned ? (
+                           <span className="badge badge-danger">Banned</span>
+                         ) : u.is_suspended ? (
+                           <span className="badge badge-pending">Suspended</span>
+                         ) : (
+                           <span className="badge badge-verified">Active</span>
+                         )}
+                       </td>
+diff --git a/src/pages/admin/WorkerManagement.jsx b/src/pages/admin/WorkerManagement.jsx
+index 079589a..fae5afa 100644
+--- a/src/pages/admin/WorkerManagement.jsx
++++ b/src/pages/admin/WorkerManagement.jsx
+@@ -139,23 +139,28 @@ export default function WorkerManagement() {
+                   <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                     No verification documents uploaded yet.
+                   </p>
+                 ) : (
+                   documents.map(doc => (
+                     <div key={doc.id} className="card glass" style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                         <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '11px', color: 'var(--primary)' }}>
+                           {doc.doc_type} CARD
+                         </span>
+-                        <a href={doc.doc_url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', fontWeight: 600 }}>
++                        <button 
++                          type="button"
++                          onClick={() => window.open(doc.doc_url, '_blank')} 
++                          className="btn btn-ghost"
++                          style={{ fontSize: '12px', fontWeight: 600, padding: 0 }}
++                        >
+                           View Original Image
+-                        </a>
++                        </button>
+                       </div>
+                       <img 
+                         src={doc.doc_url} 
+                         alt="Gov Document File" 
+                         style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '4px' }} 
+                       />
+                     </div>
+                   ))
+                 )}
+               </div>
+diff --git a/src/pages/auth/AuthPage.jsx b/src/pages/auth/AuthPage.jsx
+index 7e1aa45..b942d70 100644
+--- a/src/pages/auth/AuthPage.jsx
++++ b/src/pages/auth/AuthPage.jsx
+@@ -14,21 +14,25 @@ export default function AuthPage() {
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault()
+     if (!email || !password) {
+       toast.error('Please enter email and password')
+       return
+     }
+ 
+     setLoading(true)
+     try {
+-      const data = await signIn(email, password)
++      let authEmail = email
++      if (!email.includes('@')) {
++        authEmail = `${email}@cleanconnect.com`
++      }
++      const data = await signIn(authEmail, password)
+       toast.success('Logged in successfully!')
+       
+       const profile = await getUserProfile(data.user.id)
+       const userRole = profile?.roles?.name
+ 
+       if (userRole === 'admin') {
+         navigate('/admin/dashboard')
+       } else if (userRole === 'worker') {
+         navigate('/worker/dashboard')
+       } else if (userRole === 'homeowner') {
+@@ -77,33 +81,33 @@ export default function AuthPage() {
+           </div>
+           <h2 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Welcome Back</h2>
+           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+             Find verified cleaners or receive job bookings
+           </p>
+         </div>
+ 
+         {/* Login Form */}
+         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+           <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Email Address</label>
++            <label className="form-label">Email Address or Phone Number</label>
+             <div style={{ position: 'relative' }}>
+               <Mail 
+                 size={18} 
+                 color="var(--text-muted)" 
+                 style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} 
+               />
+               <input 
+-                type="email" 
++                type="text" 
+                 className="form-input" 
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+-                placeholder="you@example.com"
++                placeholder="you@example.com or 9876543210"
+                 style={{ paddingLeft: '2.5rem' }}
+                 required
+               />
+             </div>
+           </div>
+ 
+           <div className="form-group" style={{ margin: 0 }}>
+             <label className="form-label">Password</label>
+             <div style={{ position: 'relative' }}>
+               <Lock 
+diff --git a/src/pages/auth/DocumentUpload.jsx b/src/pages/auth/DocumentUpload.jsx
+index a645b8e..5912ce9 100644
+--- a/src/pages/auth/DocumentUpload.jsx
++++ b/src/pages/auth/DocumentUpload.jsx
+@@ -17,48 +17,60 @@ export default function DocumentUpload() {
+     const file = e.target.files[0]
+     if (file) {
+       if (type === 'aadhaar') setAadhaarFile(file)
+       if (type === 'pan') setPanFile(file)
+     }
+   }
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault()
+     if (!aadhaarFile && !panFile) {
+-      toast.error('Please upload at least Aadhaar Card or PAN Card')
++      toast.error('Please upload at least one document: Aadhaar Card or PAN Card')
++      return
++    }
++
++    if (aadhaarFile && (!aadhaarNo || aadhaarNo.length !== 12)) {
++      toast.error('Please enter a valid 12-digit Aadhaar Card number')
++      return
++    }
++    if (aadhaarNo && !aadhaarFile) {
++      toast.error('Please choose the Aadhaar Card image to upload')
++      return
++    }
++
++    if (panFile && (!panNo || panNo.length !== 10)) {
++      toast.error('Please enter a valid 10-digit PAN Card number')
++      return
++    }
++    if (panNo && !panFile) {
++      toast.error('Please choose the PAN Card image to upload')
+       return
+     }
+ 
+     setLoading(true)
+     try {
+       const storedUserId = localStorage.getItem('cleanconnect_signup_worker_id')
+       if (!storedUserId) {
+         throw new Error('Worker signup credentials not found. Restart registration.')
+       }
+ 
+       // Fetch worker profile id
+       const workerProfile = await getWorkerProfileByUserId(storedUserId)
+       if (!workerProfile) throw new Error('Worker profile not found')
+ 
+       // Upload Aadhaar if present
+-      if (aadhaarFile) {
+-        if (!aadhaarNo || aadhaarNo.length !== 12) {
+-          throw new Error('Please enter valid 12-digit Aadhaar Card number')
+-        }
++      if (aadhaarFile && aadhaarNo) {
+         await uploadWorkerDocument(workerProfile.id, aadhaarFile, 'aadhaar')
+       }
+ 
+       // Upload PAN if present
+-      if (panFile) {
+-        if (!panNo || panNo.length !== 10) {
+-          throw new Error('Please enter valid 10-digit PAN Card number')
+-        }
++      if (panFile && panNo) {
+         await uploadWorkerDocument(workerProfile.id, panFile, 'pan')
+       }
+ 
+       toast.success('Verification documents uploaded successfully!')
+       
+       // Clear temp storage
+       localStorage.removeItem('cleanconnect_signup_worker_id')
+       
+       // Navigate to Dashboard review notification
+       navigate('/worker/dashboard')
+@@ -93,21 +105,23 @@ export default function DocumentUpload() {
+         <div className="card glass" style={{ padding: '0.75rem', background: 'var(--warning-light)', border: '1px solid rgba(245, 158, 11, 0.2)', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+           <ShieldAlert size={18} color="var(--warning)" style={{ flexShrink: 0, marginTop: '2px' }} />
+           <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+             Mandatory: Upload Aadhaar Card (12 digits) or PAN Card (10 digits). Admin approval is required before you can appear in search results.
+           </span>
+         </div>
+ 
+         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+           {/* Aadhaar Upload */}
+           <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Aadhaar Card Number (12 digits)</label>
++            <label className="form-label">
++              Aadhaar Card Number (12 digits) {panFile || panNo ? <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(Optional)</span> : ''}
++            </label>
+             <input 
+               type="text" 
+               maxLength={12}
+               className="form-input" 
+               placeholder="e.g. 123456789012"
+               value={aadhaarNo}
+               onChange={(e) => setAadhaarNo(e.target.value.replace(/[^0-9]/g, ''))}
+             />
+             
+             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.5rem' }}>
+@@ -123,21 +137,23 @@ export default function DocumentUpload() {
+               <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                 {aadhaarFile ? aadhaarFile.name : 'No file selected'}
+               </span>
+             </div>
+           </div>
+ 
+           <div style={{ borderTop: '1px dashed var(--border-subtle)' }} />
+ 
+           {/* PAN Upload */}
+           <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">PAN Card Number (10 alphanumeric)</label>
++            <label className="form-label">
++              PAN Card Number (10 alphanumeric) {aadhaarFile || aadhaarNo ? <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(Optional)</span> : ''}
++            </label>
+             <input 
+               type="text" 
+               maxLength={10}
+               className="form-input" 
+               placeholder="e.g. ABCDE1234F"
+               value={panNo}
+               onChange={(e) => setPanNo(e.target.value.toUpperCase())}
+             />
+             
+             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.5rem' }}>
+diff --git a/src/pages/auth/HomeOwnerSignup.jsx b/src/pages/auth/HomeOwnerSignup.jsx
+index 658d593..bade4ec 100644
+--- a/src/pages/auth/HomeOwnerSignup.jsx
++++ b/src/pages/auth/HomeOwnerSignup.jsx
+@@ -1,32 +1,36 @@
+ import React, { useEffect, useState } from 'react'
+ import { useNavigate } from 'react-router-dom'
+ import { useForm } from 'react-hook-form'
+ import { zodResolver } from '@hookform/resolvers/zod'
+ import { Sparkles, MapPin, Search } from 'lucide-react'
+ import { homeownerSignupSchema } from '../../utils/validators'
+-import { signUp, createHomeownerProfile, getRoles } from '../../services/auth'
+-import { getStates, getCities, getAreas, searchSocieties, findOrCreateSociety } from '../../services/locations'
++import { signUp, signIn, createHomeownerProfile, getRoles } from '../../services/auth'
++import { getStates, getCities, getAreas, searchSocieties, findOrCreateSociety, findOrCreateState, findOrCreateCity, findOrCreateArea } from '../../services/locations'
+ import LocationPicker from '../../components/maps/LocationPicker'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function HomeOwnerSignup() {
+   const navigate = useNavigate()
+   const [step, setStep] = useState(1)
+   const [loading, setLoading] = useState(false)
+ 
+   // Location lists
+   const [statesList, setStatesList] = useState([])
+   const [citiesList, setCitiesList] = useState([])
+   const [areasList, setAreasList] = useState([])
+   const [societiesList, setSocietiesList] = useState([])
+   const [selectedSocietyId, setSelectedSocietyId] = useState(null)
++  
++  const [showStateSuggestions, setShowStateSuggestions] = useState(false)
++  const [showCitySuggestions, setShowCitySuggestions] = useState(false)
++  const [showAreaSuggestions, setShowAreaSuggestions] = useState(false)
+   const [showSocietySuggestions, setShowSocietySuggestions] = useState(false)
+ 
+   const {
+     register,
+     handleSubmit,
+     setValue,
+     watch,
+     formState: { errors },
+     trigger
+   } = useForm({
+@@ -42,81 +46,89 @@ export default function HomeOwnerSignup() {
+       area: '',
+       societyName: '',
+       houseNumber: '',
+       address: '',
+       latitude: undefined,
+       longitude: undefined
+     }
+   })
+ 
+   // Watch state, city, area to fetch lists dynamically
+-  const selectedState = watch('state')
+-  const selectedCity = watch('city')
+-  const selectedArea = watch('area')
++  const typedState = watch('state')
++  const typedCity = watch('city')
++  const typedArea = watch('area')
+   const typedSocietyName = watch('societyName')
+   const pinLat = watch('latitude')
+   const pinLng = watch('longitude')
+ 
+   // Load States on mount
+   useEffect(() => {
+     getStates().then(setStatesList).catch(err => console.error('Error fetching states:', err))
+   }, [])
+ 
+-  // Load Cities when state changes
++  // Load Cities when state matches
+   useEffect(() => {
+-    if (selectedState) {
+-      getCities(selectedState).then(setCitiesList)
+-      setValue('city', '')
+-      setValue('area', '')
++    const st = statesList.find(s => s.name.toLowerCase() === (typedState || '').toLowerCase())
++    if (st) {
++      getCities(st.id).then(setCitiesList)
++    } else {
++      setCitiesList([])
+     }
+-  }, [selectedState, setValue])
++  }, [typedState, statesList])
+ 
+-  // Load Areas when city changes
++  // Load Areas when city matches
+   useEffect(() => {
+-    if (selectedCity) {
+-      getAreas(selectedCity).then(setAreasList)
+-      setValue('area', '')
++    const ct = citiesList.find(c => c.name.toLowerCase() === (typedCity || '').toLowerCase())
++    if (ct) {
++      getAreas(ct.id).then(setAreasList)
++    } else {
++      setAreasList([])
+     }
+-  }, [selectedCity, setValue])
++  }, [typedCity, citiesList])
+ 
+   // Smart Society Database Search Autocomplete
+   useEffect(() => {
++    const matchedCity = citiesList.find(c => c.name.toLowerCase() === (typedCity || '').toLowerCase())
++    const cityId = matchedCity ? matchedCity.id : null
++
+     if (typedSocietyName && typedSocietyName.length >= 2) {
+-      searchSocieties(typedSocietyName, selectedCity || null).then(setSocietiesList)
++      searchSocieties(typedSocietyName, cityId).then(setSocietiesList)
+       setShowSocietySuggestions(true)
+     } else {
+       setSocietiesList([])
+       setShowSocietySuggestions(false)
+     }
+-  }, [typedSocietyName, selectedCity])
++  }, [typedSocietyName, typedCity, citiesList])
+ 
+   const selectSociety = (soc) => {
+     setValue('societyName', soc.name)
+     setSelectedSocietyId(soc.id)
+     setShowSocietySuggestions(false)
+     if (soc.latitude && soc.longitude) {
+       setValue('latitude', soc.latitude)
+       setValue('longitude', soc.longitude)
+     }
+     toast.success(`Society "${soc.name}" selected!`)
+   }
+ 
+   const handleLocationPin = (coords) => {
+     setValue('latitude', coords.latitude)
+     setValue('longitude', coords.longitude)
+     setValue('address', coords.address)
+ 
+     // Parse Nominatim details if available to auto-fill location fields
+     const addr = coords.rawGeoData?.address || {}
+     if (addr.state) {
+-      const matchState = statesList.find(s => s.name.toLowerCase().includes(addr.state.toLowerCase()))
+-      if (matchState) setValue('state', matchState.id)
++      setValue('state', addr.state)
++    }
++    if (addr.city || addr.town || addr.village) {
++      setValue('city', addr.city || addr.town || addr.village)
+     }
+     
+     // Suggest society name from reverse geocode
+     const parsedSociety = addr.neighbourhood || addr.suburb || addr.residential || ''
+     if (parsedSociety) {
+       setValue('societyName', parsedSociety)
+     }
+   }
+ 
+   const handleNext = async () => {
+@@ -140,45 +152,73 @@ export default function HomeOwnerSignup() {
+     try {
+       // 1. Get role ID for homeowner
+       const roles = await getRoles()
+       const homeownerRole = roles.find(r => r.name === 'homeowner')
+       if (!homeownerRole) throw new Error('Role "homeowner" not configured in database')
+ 
+       // Create fallback email if blank
+       const authEmail = data.email || `${data.phone}@cleanconnect.com`
+ 
+       // 2. Sign up Auth User
+-      const authResult = await signUp(authEmail, data.password, data.fullName)
+-      const userId = authResult.user.id
++      let userId;
++      try {
++        const authResult = await signUp(authEmail, data.password, data.fullName)
++        userId = authResult.user.id
++      } catch (err) {
++        if (err.message && err.message.toLowerCase().includes('already registered')) {
++          // If the user already exists (likely from a previous failed registration attempt),
++          // try to sign them in with the provided credentials to continue profile creation.
++          const authResult = await signIn(authEmail, data.password)
++          userId = authResult.user.id
++        } else {
++          throw err
++        }
++      }
++
++      // 3. Find or Create Smart Location hierarchy
++      let finalStateId = null
++      let finalCityId = null
++      let finalAreaId = null
++      
++      const matchedState = statesList.find(s => s.name.toLowerCase() === data.state.toLowerCase())
++      if (matchedState) finalStateId = matchedState.id
++      else { const st = await findOrCreateState(data.state); finalStateId = st.id; }
++
++      const matchedCity = citiesList.find(c => c.name.toLowerCase() === data.city.toLowerCase())
++      if (matchedCity) finalCityId = matchedCity.id
++      else { const ct = await findOrCreateCity(data.city, finalStateId); finalCityId = ct.id; }
++
++      const matchedArea = areasList.find(a => a.name.toLowerCase() === data.area.toLowerCase())
++      if (matchedArea) finalAreaId = matchedArea.id
++      else { const ar = await findOrCreateArea(data.area, finalCityId); finalAreaId = ar.id; }
+ 
+-      // 3. Find or Create Smart Society entry
+       let finalSocietyId = selectedSocietyId
+       if (!finalSocietyId && data.societyName) {
+         const createdSoc = await findOrCreateSociety({
+           name: data.societyName,
+-          areaId: data.area || null,
+-          cityId: data.city || null,
++          areaId: finalAreaId,
++          cityId: finalCityId,
+           latitude: data.latitude,
+           longitude: data.longitude,
+           address: data.address
+         })
+         finalSocietyId = createdSoc.id
+       }
+ 
+       // 4. Create Homeowner detailed profile
+       await createHomeownerProfile(userId, homeownerRole.id, {
+         fullName: data.fullName,
+         email: data.email,
+         phone: data.phone,
+-        stateId: data.state,
+-        cityId: data.city,
+-        areaId: data.area,
++        stateId: finalStateId,
++        cityId: finalCityId,
++        areaId: finalAreaId,
+         societyId: finalSocietyId,
+         societyName: data.societyName,
+         houseNumber: data.houseNumber,
+         address: data.address,
+         latitude: data.latitude,
+         longitude: data.longitude
+       })
+ 
+       toast.success('Registration complete! Welcome to CleanConnect.')
+       navigate('/homeowner/dashboard')
+@@ -240,58 +280,82 @@ export default function HomeOwnerSignup() {
+                   {errors.confirmPassword && <span className="form-error">{errors.confirmPassword.message}</span>}
+                 </div>
+               </div>
+             </div>
+           )}
+ 
+           {/* STEP 2: Address and Location Picker */}
+           {step === 2 && (
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+               <div className="grid-3">
+-                <div className="form-group" style={{ margin: 0 }}>
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">State</label>
+-                  <select className="form-select" {...register('state')}>
+-                    <option value="">Select State</option>
+-                    {statesList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type State" autoComplete="off"
++                    {...register('state', { onBlur: () => setTimeout(() => setShowStateSuggestions(false), 200) })}
++                    onFocus={() => setShowStateSuggestions(true)}
++                  />
++                  {showStateSuggestions && statesList.filter(s => s.name.toLowerCase().includes((watch('state')||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {statesList.filter(s => s.name.toLowerCase().includes((watch('state')||'').toLowerCase())).map(st => (
++                        <li key={st.id} onClick={() => { setValue('state', st.name); setShowStateSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{st.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                   {errors.state && <span className="form-error">{errors.state.message}</span>}
+                 </div>
+ 
+-                <div className="form-group" style={{ margin: 0 }}>
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">City</label>
+-                  <select className="form-select" {...register('city')} disabled={!selectedState}>
+-                    <option value="">Select City</option>
+-                    {citiesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type City" autoComplete="off"
++                    {...register('city', { onBlur: () => setTimeout(() => setShowCitySuggestions(false), 200) })}
++                    onFocus={() => setShowCitySuggestions(true)}
++                  />
++                  {showCitySuggestions && citiesList.filter(c => c.name.toLowerCase().includes((watch('city')||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {citiesList.filter(c => c.name.toLowerCase().includes((watch('city')||'').toLowerCase())).map(ct => (
++                        <li key={ct.id} onClick={() => { setValue('city', ct.name); setShowCitySuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ct.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                   {errors.city && <span className="form-error">{errors.city.message}</span>}
+                 </div>
+ 
+-                <div className="form-group" style={{ margin: 0 }}>
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">Local Area</label>
+-                  <select className="form-select" {...register('area')} disabled={!selectedCity}>
+-                    <option value="">Select Area</option>
+-                    {areasList.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type Area" autoComplete="off"
++                    {...register('area', { onBlur: () => setTimeout(() => setShowAreaSuggestions(false), 200) })}
++                    onFocus={() => setShowAreaSuggestions(true)}
++                  />
++                  {showAreaSuggestions && areasList.filter(a => a.name.toLowerCase().includes((watch('area')||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {areasList.filter(a => a.name.toLowerCase().includes((watch('area')||'').toLowerCase())).map(ar => (
++                        <li key={ar.id} onClick={() => { setValue('area', ar.name); setShowAreaSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ar.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                   {errors.area && <span className="form-error">{errors.area.message}</span>}
+                 </div>
+               </div>
+ 
+               {/* Society Database Smart Autocomplete suggestions */}
+               <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                 <label className="form-label">Society / Building Name</label>
+                 <div style={{ position: 'relative' }}>
+                   <input 
+                     type="text" 
+                     className="form-input" 
+                     placeholder="Type Society..." 
+-                    {...register('societyName')} 
++                    {...register('societyName', {
++                      onBlur: () => setTimeout(() => setShowSocietySuggestions(false), 200)
++                    })} 
+                     autoComplete="off"
++                    onFocus={() => { if (societiesList.length > 0) setShowSocietySuggestions(true) }}
+                   />
+                   <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                 </div>
+                 {errors.societyName && <span className="form-error">{errors.societyName.message}</span>}
+                 
+                 {showSocietySuggestions && societiesList.length > 0 && (
+                   <ul className="glass" style={{
+                     position: 'absolute', top: '100%', left: 0, right: 0,
+                     borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px',
+                     maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px'
+diff --git a/src/pages/auth/WorkerSignup.jsx b/src/pages/auth/WorkerSignup.jsx
+index 4730569..c59b4bf 100644
+--- a/src/pages/auth/WorkerSignup.jsx
++++ b/src/pages/auth/WorkerSignup.jsx
+@@ -1,35 +1,43 @@
+ import React, { useEffect, useState } from 'react'
+ import { useNavigate } from 'react-router-dom'
+ import { useForm } from 'react-hook-form'
+ import { zodResolver } from '@hookform/resolvers/zod'
+-import { Sparkles, MapPin, Plus, Trash2 } from 'lucide-react'
++import { Sparkles, MapPin, Plus, Trash2, Search } from 'lucide-react'
+ import { workerSignupSchema } from '../../utils/validators'
+-import { signUp, createWorkerProfile, getRoles } from '../../services/auth'
+-import { getStates, getCities, getAreas, searchSocieties } from '../../services/locations'
++import { signUp, signIn, createWorkerProfile, getRoles } from '../../services/auth'
++import { getStates, getCities, getAreas, searchSocieties, findOrCreateState, findOrCreateCity, findOrCreateArea, findOrCreateSociety } from '../../services/locations'
++import LocationPicker from '../../components/maps/LocationPicker'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function WorkerSignup() {
+   const navigate = useNavigate()
+   const [step, setStep] = useState(1)
+   const [loading, setLoading] = useState(false)
+ 
+   // Location selector helper states
+   const [statesList, setStatesList] = useState([])
+   const [citiesList, setCitiesList] = useState([])
+   const [areasList, setAreasList] = useState([])
+   
++  const [showStateSuggestions, setShowStateSuggestions] = useState(false)
++  const [showCitySuggestions, setShowCitySuggestions] = useState(false)
++  const [showAreaSuggestions, setShowAreaSuggestions] = useState(false)
++  const [showSocietySuggestions, setShowSocietySuggestions] = useState(false)
++  const [societiesList, setSocietiesList] = useState([])
++  
+   // Work Locations adding system
+   const [locations, setLocations] = useState([])
+   const [currentLoc, setCurrentLoc] = useState({
+     stateId: '', cityId: '', areaId: '', societyId: '',
+-    stateName: '', cityName: '', areaName: '', societyName: ''
++    stateName: '', cityName: '', areaName: '', societyName: '',
++    latitude: undefined, longitude: undefined, address: ''
+   })
+ 
+   const {
+     register,
+     handleSubmit,
+     setValue,
+     watch,
+     formState: { errors },
+     trigger
+   } = useForm({
+@@ -56,60 +64,117 @@ export default function WorkerSignup() {
+   // Watch fields
+   const watchLanguages = watch('languages')
+   const watchWorkerType = watch('workerType')
+ 
+   useEffect(() => {
+     getStates().then(setStatesList).catch(err => console.error('Error fetching states:', err))
+   }, [])
+ 
+   // Load cities when current location state selection changes
+   useEffect(() => {
+-    if (currentLoc.stateId) {
+-      getCities(currentLoc.stateId).then(setCitiesList)
++    const st = statesList.find(s => s.name.toLowerCase() === (currentLoc.stateName || '').toLowerCase())
++    if (st) {
++      getCities(st.id).then(setCitiesList)
++    } else {
++      setCitiesList([])
+     }
+-  }, [currentLoc.stateId])
++  }, [currentLoc.stateName, statesList])
+ 
+   // Load areas when city changes
+   useEffect(() => {
+-    if (currentLoc.cityId) {
+-      getAreas(currentLoc.cityId).then(setAreasList)
++    const ct = citiesList.find(c => c.name.toLowerCase() === (currentLoc.cityName || '').toLowerCase())
++    if (ct) {
++      getAreas(ct.id).then(setAreasList)
++    } else {
++      setAreasList([])
+     }
+-  }, [currentLoc.cityId])
++  }, [currentLoc.cityName, citiesList])
+ 
+-  const addLocationRow = () => {
+-    if (!currentLoc.stateId || !currentLoc.cityId || !currentLoc.areaId) {
+-      toast.error('Select State, City and Area to add location')
+-      return
++  // Smart Society Database Search Autocomplete
++  useEffect(() => {
++    const matchedCity = citiesList.find(c => c.name.toLowerCase() === (currentLoc.cityName || '').toLowerCase())
++    const cityId = matchedCity ? matchedCity.id : null
++
++    if (currentLoc.societyName && currentLoc.societyName.length >= 2 && showSocietySuggestions) {
++      searchSocieties(currentLoc.societyName, cityId).then(setSocietiesList)
++    } else {
++      setSocietiesList([])
+     }
++  }, [currentLoc.societyName, currentLoc.cityName, citiesList, showSocietySuggestions])
++
++  const selectSociety = (soc) => {
++    setCurrentLoc({
++      ...currentLoc,
++      societyName: soc.name,
++      societyId: soc.id,
++      latitude: soc.latitude || currentLoc.latitude,
++      longitude: soc.longitude || currentLoc.longitude
++    })
++    setShowSocietySuggestions(false)
++    toast.success(`Society "${soc.name}" selected!`)
++  }
+ 
+-    const stateObj = statesList.find(s => s.id === currentLoc.stateId)
+-    const cityObj = citiesList.find(c => c.id === currentLoc.cityId)
+-    const areaObj = areasList.find(a => a.id === currentLoc.areaId)
++  const addLocationRow = async () => {
++    if (!currentLoc.stateName || !currentLoc.cityName || !currentLoc.areaName) {
++      toast.error('Type State, City and Area to add location')
++      return
++    }
+ 
+     const newLoc = {
+-      stateId: currentLoc.stateId,
+-      cityId: currentLoc.cityId,
+-      areaId: currentLoc.areaId,
+-      societyId: currentLoc.societyId || null,
+-      stateName: stateObj?.name || '',
+-      cityName: cityObj?.name || '',
+-      areaName: areaObj?.name || '',
+-      societyName: currentLoc.societyName || 'All Societies'
++      stateName: currentLoc.stateName,
++      cityName: currentLoc.cityName,
++      areaName: currentLoc.areaName,
++      societyName: currentLoc.societyName || 'All Societies',
++      latitude: currentLoc.latitude,
++      longitude: currentLoc.longitude,
++      address: currentLoc.address,
++      societyId: currentLoc.societyId // in case selected from autocomplete
+     }
+ 
+     setLocations([...locations, newLoc])
+-    // Reset location adding state
++      // Reset location adding state
++      setCurrentLoc({
++        stateId: '', cityId: '', areaId: '', societyId: '',
++        stateName: '', cityName: '', areaName: '', societyName: '',
++        latitude: undefined, longitude: undefined, address: ''
++      })
++      toast.success('Work Location added!')
++  }
++
++  const handleLocationPin = (coords) => {
++    // Parse Nominatim details if available to auto-fill location fields
++    const addr = coords.rawGeoData?.address || {}
++    let stateName = currentLoc.stateName
++    let cityName = currentLoc.cityName
++    let societyName = currentLoc.societyName
++
++    if (addr.state) stateName = addr.state
++    if (addr.city || addr.town || addr.village) cityName = (addr.city || addr.town || addr.village)
++    
++    // Suggest society name from reverse geocode
++    const parsedSociety = addr.neighbourhood || addr.suburb || addr.residential || ''
++    if (parsedSociety) societyName = parsedSociety
++    
++    // We can also extract area from suburb if needed, but often suburb is area
++    let areaName = currentLoc.areaName
++    if (addr.suburb && !parsedSociety) areaName = addr.suburb
++
+     setCurrentLoc({
+-      stateId: '', cityId: '', areaId: '', societyId: '',
+-      stateName: '', cityName: '', areaName: '', societyName: ''
++      ...currentLoc,
++      latitude: coords.latitude,
++      longitude: coords.longitude,
++      address: coords.address,
++      stateName,
++      cityName,
++      areaName,
++      societyName
+     })
+-    toast.success('Work Location added!')
+   }
+ 
+   const removeLocationRow = (index) => {
+     setLocations(locations.filter((_, idx) => idx !== index))
+   }
+ 
+   const handleLanguageAdd = (lang) => {
+     const list = watchLanguages || []
+     if (lang && !list.includes(lang)) {
+       setValue('languages', [...list, lang])
+@@ -152,27 +217,81 @@ export default function WorkerSignup() {
+     try {
+       // 1. Get role ID for worker
+       const roles = await getRoles()
+       const workerRole = roles.find(r => r.name === 'worker')
+       if (!workerRole) throw new Error('Role "worker" not configured in database')
+ 
+       // Create fallback email if blank
+       const authEmail = data.email || `${data.phone}@cleanconnect.com`
+ 
+       // 2. Sign up Auth User
+-      const authResult = await signUp(authEmail, data.password, data.fullName)
+-      const userId = authResult.user.id
++      let userId;
++      try {
++        const authResult = await signUp(authEmail, data.password, data.fullName)
++        userId = authResult.user.id
++      } catch (err) {
++        if (err.message && err.message.toLowerCase().includes('already registered')) {
++          const authResult = await signIn(authEmail, data.password)
++          userId = authResult.user.id
++        } else {
++          throw err
++        }
++      }
+ 
+-      // 3. Create Worker Profile with primary locations list
++      // 3. Find or Create Smart Location hierarchy
++      const resolvedLocations = []
++      for (const loc of locations) {
++        let finalStateId = null
++        let finalCityId = null
++        let finalAreaId = null
++        
++        const matchedState = statesList.find(s => s.name.toLowerCase() === loc.stateName.toLowerCase())
++        if (matchedState) finalStateId = matchedState.id
++        else { const st = await findOrCreateState(loc.stateName); finalStateId = st.id; }
++
++        const matchedCity = citiesList.find(c => c.name.toLowerCase() === loc.cityName.toLowerCase())
++        if (matchedCity) finalCityId = matchedCity.id
++        else { const ct = await findOrCreateCity(loc.cityName, finalStateId); finalCityId = ct.id; }
++
++        const matchedArea = areasList.find(a => a.name.toLowerCase() === loc.areaName.toLowerCase())
++        if (matchedArea) finalAreaId = matchedArea.id
++        else { const ar = await findOrCreateArea(loc.areaName, finalCityId); finalAreaId = ar.id; }
++
++        let finalSocietyId = loc.societyId || null
++        if (!finalSocietyId && loc.societyName && loc.societyName !== 'All Societies') {
++          const createdSoc = await findOrCreateSociety({
++            name: loc.societyName,
++            areaId: finalAreaId,
++            cityId: finalCityId,
++            latitude: loc.latitude || undefined,
++            longitude: loc.longitude || undefined,
++            address: loc.address || ''
++          })
++          finalSocietyId = createdSoc.id
++        }
++
++        resolvedLocations.push({
++          stateId: finalStateId,
++          cityId: finalCityId,
++          areaId: finalAreaId,
++          societyId: finalSocietyId,
++          stateName: loc.stateName,
++          cityName: loc.cityName,
++          areaName: loc.areaName,
++          societyName: loc.societyName
++        })
++      }
++
++      // 4. Create Worker Profile with primary locations list
+       await createWorkerProfile(userId, workerRole.id, {
+         ...data,
+-        locations
++        locations: resolvedLocations
+       })
+ 
+       // Store worker profile credentials locally before proceeding to doc uploads
+       localStorage.setItem('cleanconnect_signup_worker_id', userId)
+ 
+       toast.success('Account created! Proceed to document uploads.')
+       navigate('/auth/documents')
+     } catch (err) {
+       console.error(err)
+       toast.error(err.message || 'Registration failed. Check details.')
+@@ -335,81 +454,129 @@ export default function WorkerSignup() {
+ 
+           {/* STEP 3: Multi Work-locations configuration */}
+           {step === 3 && (
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+               <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Configure Work Locations</h4>
+               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                 Select multiple cities, areas or societies. Unlimited target locations allowed.
+               </p>
+ 
+               {/* Selector Row */}
+-              <div className="grid-3" style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
+-                <div className="form-group" style={{ margin: 0 }}>
++              <div className="grid-3">
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">State</label>
+-                  <select 
+-                    className="form-select"
+-                    value={currentLoc.stateId}
+-                    onChange={(e) => setCurrentLoc({ ...currentLoc, stateId: e.target.value })}
+-                  >
+-                    <option value="">Select State</option>
+-                    {statesList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type State" autoComplete="off"
++                    value={currentLoc.stateName}
++                    onChange={(e) => setCurrentLoc({ ...currentLoc, stateName: e.target.value })}
++                    onFocus={() => setShowStateSuggestions(true)}
++                    onBlur={() => setTimeout(() => setShowStateSuggestions(false), 200)}
++                  />
++                  {showStateSuggestions && statesList.filter(s => s.name.toLowerCase().includes((currentLoc.stateName||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {statesList.filter(s => s.name.toLowerCase().includes((currentLoc.stateName||'').toLowerCase())).map(st => (
++                        <li key={st.id} onClick={() => { setCurrentLoc({ ...currentLoc, stateName: st.name }); setShowStateSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{st.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                 </div>
+ 
+-                <div className="form-group" style={{ margin: 0 }}>
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">City</label>
+-                  <select 
+-                    className="form-select"
+-                    value={currentLoc.cityId}
+-                    disabled={!currentLoc.stateId}
+-                    onChange={(e) => setCurrentLoc({ ...currentLoc, cityId: e.target.value })}
+-                  >
+-                    <option value="">Select City</option>
+-                    {citiesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type City" autoComplete="off"
++                    value={currentLoc.cityName}
++                    onChange={(e) => setCurrentLoc({ ...currentLoc, cityName: e.target.value })}
++                    onFocus={() => setShowCitySuggestions(true)}
++                    onBlur={() => setTimeout(() => setShowCitySuggestions(false), 200)}
++                  />
++                  {showCitySuggestions && citiesList.filter(c => c.name.toLowerCase().includes((currentLoc.cityName||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {citiesList.filter(c => c.name.toLowerCase().includes((currentLoc.cityName||'').toLowerCase())).map(ct => (
++                        <li key={ct.id} onClick={() => { setCurrentLoc({ ...currentLoc, cityName: ct.name }); setShowCitySuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ct.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                 </div>
+ 
+-                <div className="form-group" style={{ margin: 0 }}>
++                <div className="form-group" style={{ margin: 0, position: 'relative' }}>
+                   <label className="form-label">Area</label>
+-                  <select 
+-                    className="form-select"
+-                    value={currentLoc.areaId}
+-                    disabled={!currentLoc.cityId}
+-                    onChange={(e) => setCurrentLoc({ ...currentLoc, areaId: e.target.value })}
+-                  >
+-                    <option value="">Select Area</option>
+-                    {areasList.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+-                  </select>
++                  <input type="text" className="form-input" placeholder="Type Area" autoComplete="off"
++                    value={currentLoc.areaName}
++                    onChange={(e) => setCurrentLoc({ ...currentLoc, areaName: e.target.value })}
++                    onFocus={() => setShowAreaSuggestions(true)}
++                    onBlur={() => setTimeout(() => setShowAreaSuggestions(false), 200)}
++                  />
++                  {showAreaSuggestions && areasList.filter(a => a.name.toLowerCase().includes((currentLoc.areaName||'').toLowerCase())).length > 0 && (
++                    <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
++                      {areasList.filter(a => a.name.toLowerCase().includes((currentLoc.areaName||'').toLowerCase())).map(ar => (
++                        <li key={ar.id} onClick={() => { setCurrentLoc({ ...currentLoc, areaName: ar.name }); setShowAreaSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ar.name}</li>
++                      ))}
++                    </ul>
++                  )}
+                 </div>
+               </div>
+ 
+               <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+-                <div className="form-group" style={{ margin: 0, flex: 1 }}>
++                <div className="form-group" style={{ margin: 0, flex: 1, position: 'relative' }}>
+                   <label className="form-label">Society Name (Optional - leave blank for all areas)</label>
+-                  <input 
+-                    type="text" 
+-                    className="form-input" 
+-                    placeholder="e.g. Green Park Residency"
+-                    value={currentLoc.societyName}
+-                    onChange={(e) => setCurrentLoc({ ...currentLoc, societyName: e.target.value })}
+-                  />
++                  <div style={{ position: 'relative' }}>
++                    <input 
++                      type="text" 
++                      className="form-input" 
++                      placeholder="e.g. Green Park Residency"
++                      value={currentLoc.societyName}
++                      onChange={(e) => {
++                        setCurrentLoc({ ...currentLoc, societyName: e.target.value })
++                        setShowSocietySuggestions(true)
++                      }}
++                      onBlur={() => setTimeout(() => setShowSocietySuggestions(false), 200)}
++                      onFocus={() => { if (societiesList.length > 0 || currentLoc.societyName?.length >= 2) setShowSocietySuggestions(true) }}
++                      autoComplete="off"
++                    />
++                    <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }} />
++                  </div>
++                  
++                  {showSocietySuggestions && societiesList.length > 0 && (
++                    <ul className="glass" style={{
++                      position: 'absolute', top: '100%', left: 0, right: 0,
++                      borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px',
++                      maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px'
++                    }}>
++                      {societiesList.map(soc => (
++                        <li 
++                          key={soc.id}
++                          onClick={() => selectSociety(soc)}
++                          style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }}
++                          className="glass-hover"
++                        >
++                          {soc.name} <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({soc.cities?.name || ''})</span>
++                        </li>
++                      ))}
++                    </ul>
++                  )}
+                 </div>
+                 <button 
+                   type="button" 
+                   onClick={addLocationRow} 
+                   className="btn btn-primary"
+                   style={{ gap: '4px', height: '44px' }}
+                 >
+                   <Plus size={16} /> Add
+                 </button>
+               </div>
+ 
++              {/* Map location picker integrated with geocoding */}
++              <LocationPicker 
++                lat={currentLoc.latitude} 
++                lng={currentLoc.longitude} 
++                onLocationChange={handleLocationPin} 
++              />
++
+               {/* Added Locations list table */}
+               <div className="card glass" style={{ padding: '0.75rem', maxHeight: '180px', overflowY: 'auto' }}>
+                 {locations.length === 0 ? (
+                   <p style={{ textAlign: 'center', padding: '1rem', fontSize: '13px', color: 'var(--text-muted)' }}>
+                     No work locations added yet. Please select above and click Add.
+                   </p>
+                 ) : (
+                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                     <thead>
+                       <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
+diff --git a/src/pages/homeowner/BookingHistory.jsx b/src/pages/homeowner/BookingHistory.jsx
+index c32dbd8..69a0d48 100644
+--- a/src/pages/homeowner/BookingHistory.jsx
++++ b/src/pages/homeowner/BookingHistory.jsx
+@@ -32,21 +32,21 @@ export default function BookingHistory() {
+     if (!confirm) return
+ 
+     try {
+       await updateBookingStatus(booking.id, 'cancelled', { cancelled_by: 'homeowner' })
+       toast.success('Booking cancelled successfully')
+       
+       // Notify cleaner
+       await createNotification(
+         booking.workers.user_id,
+         'Booking Cancelled',
+-        `${homeowner.full_name} has cancelled the booking for ${formatDate(booking.booking_date)}`,
++        `${homeowner.full_name} has cancelled the booking for ${formatDate(booking.service_date)}`,
+         'booking',
+         { bookingId: booking.id }
+       )
+       
+       // Refresh list
+       const updated = bookings.map(b => b.id === booking.id ? { ...b, status: 'cancelled', cancelled_by: 'homeowner' } : b)
+       setBookings(updated)
+     } catch (err) {
+       toast.error('Failed to cancel booking')
+     }
+@@ -111,21 +111,21 @@ export default function BookingHistory() {
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+             {bookings.map(b => (
+               <div key={b.id} className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                 {b.workers?.avatar_url && (
+                   <img src={b.workers.avatar_url} alt={b.workers.full_name} style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover' }} />
+                 )}
+                 
+                 <div style={{ flex: 1, minWidth: '200px' }}>
+                   <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{b.workers?.full_name}</h3>
+                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+-                    {formatDate(b.booking_date)} at {formatTime(b.booking_time)}
++                    {formatDate(b.service_date)} at {formatTime(b.service_time)}
+                   </p>
+                   <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                     Payment: <span style={{ textTransform: 'capitalize' }}>{b.payment_method}</span> ({b.payment_status})
+                   </p>
+                 </div>
+ 
+                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                   <span className={`badge ${getStatusClass(b.status)}`}>
+                     {b.status}
+                   </span>
+diff --git a/src/pages/homeowner/BookingScreen.jsx b/src/pages/homeowner/BookingScreen.jsx
+index b436c19..8ebdc85 100644
+--- a/src/pages/homeowner/BookingScreen.jsx
++++ b/src/pages/homeowner/BookingScreen.jsx
+@@ -10,20 +10,21 @@ import { ArrowLeft, Calendar, Clock, MapPin, QrCode } from 'lucide-react'
+ import { toast } from 'react-hot-toast'
+ 
+ export default function BookingScreen() {
+   const { workerId } = useParams()
+   const navigate = useNavigate()
+   const { homeowner } = useAuth()
+   const [worker, setWorker] = useState(null)
+   const [loading, setLoading] = useState(true)
+ 
+   // Form states
++  const [isImmediate, setIsImmediate] = useState(false)
+   const [bookingDate, setBookingDate] = useState('')
+   const [bookingTime, setBookingTime] = useState('09:00')
+   const [notes, setNotes] = useState('')
+   const [address, setAddress] = useState('')
+   const [paymentMethod, setPaymentMethod] = useState('cash')
+   const [showQrModal, setShowQrModal] = useState(false)
+   const [submitting, setSubmitting] = useState(false)
+ 
+   useEffect(() => {
+     getWorkerById(workerId)
+@@ -49,50 +50,67 @@ export default function BookingScreen() {
+     )
+   }
+ 
+   const timeSlots = [
+     '07:00', '08:00', '09:00', '10:00', '11:00', '12:00',
+     '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+   ]
+ 
+   const handleSubmit = async (e) => {
+     e.preventDefault()
+-    if (!bookingDate) {
+-      toast.error('Select a booking date')
+-      return
++    let finalDate = bookingDate
++    let finalTime = `${bookingTime}:00`
++
++    if (isImmediate) {
++      const now = new Date()
++      const year = now.getFullYear()
++      const month = String(now.getMonth() + 1).padStart(2, '0')
++      const day = String(now.getDate()).padStart(2, '0')
++      finalDate = `${year}-${month}-${day}`
++      
++      const hours = String(now.getHours()).padStart(2, '0')
++      const minutes = String(now.getMinutes()).padStart(2, '0')
++      finalTime = `${hours}:${minutes}:00`
++    } else {
++      if (!bookingDate) {
++        toast.error('Select a booking date')
++        return
++      }
+     }
++
+     if (!address) {
+       toast.error('Please enter delivery address')
+       return
+     }
+ 
+     setSubmitting(true)
+     try {
+       // 1. Create booking entry in Supabase database
+       const booking = await createBooking({
+         homeowner_id: homeowner.id,
+         worker_id: worker.id,
+-        booking_date: bookingDate,
+-        booking_time: `${bookingTime}:00`,
++        service_date: finalDate,
++        service_time: finalTime,
+         notes,
+         address,
+-        latitude: homeowner.latitude,
+-        longitude: homeowner.longitude,
++        total_price: worker.pricing_per_hour * 2, // Assuming 2 hours default
+         payment_method: paymentMethod,
+-        status: 'pending'
++        status: 'pending',
++        latitude: homeowner?.latitude || null,
++        longitude: homeowner?.longitude || null
+       })
+ 
+       // 2. Alert worker via in-app notifications system
+       await createNotification(
+         worker.user_id,
+         'New Booking Request!',
+-        `${homeowner.full_name} requested your service on ${bookingDate} at ${bookingTime}`,
++        `${homeowner.full_name} requested your service ${isImmediate ? 'RIGHT NOW' : `on ${finalDate} at ${finalTime}`}`,
+         'booking',
+         { bookingId: booking.id }
+       )
+ 
+       toast.success('Booking requested successfully!')
+       navigate('/homeowner/bookings')
+     } catch (err) {
+       console.error(err)
+       toast.error(err.message || 'Failed to place booking request')
+     } finally {
+@@ -122,41 +140,72 @@ export default function BookingScreen() {
+               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                 Rate: <span style={{ color: 'var(--primary)', fontWeight: 700 }}>{formatCurrency(worker.pricing_per_hour)}/hr</span>
+               </p>
+             </div>
+           </div>
+         )}
+ 
+         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+           
+           <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Service Date</label>
+-            <div style={{ position: 'relative' }}>
+-              <input 
+-                type="date" 
+-                className="form-input" 
+-                min={new Date().toISOString().split('T')[0]}
+-                value={bookingDate}
+-                onChange={(e) => setBookingDate(e.target.value)}
+-                required
+-              />
++            <label className="form-label">When do you need the service?</label>
++            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem' }}>
++              <label className="card glass flex-center" style={{ flex: 1, padding: '0.75rem', cursor: 'pointer', border: !isImmediate ? '2px solid var(--primary)' : '1px solid var(--border-glass)' }}>
++                <input 
++                  type="radio" 
++                  name="bookingTiming" 
++                  checked={!isImmediate} 
++                  onChange={() => setIsImmediate(false)}
++                  style={{ marginRight: '6px' }}
++                />
++                <span style={{ fontSize: '13px', fontWeight: 600 }}>📅 Schedule for later</span>
++              </label>
++
++              <label className="card glass flex-center" style={{ flex: 1, padding: '0.75rem', cursor: 'pointer', border: isImmediate ? '2px solid var(--primary)' : '1px solid var(--border-glass)' }}>
++                <input 
++                  type="radio" 
++                  name="bookingTiming" 
++                  checked={isImmediate} 
++                  onChange={() => setIsImmediate(true)}
++                  style={{ marginRight: '6px' }}
++                />
++                <span style={{ fontSize: '13px', fontWeight: 600 }}>⚡ Book Right Now</span>
++              </label>
+             </div>
+           </div>
+ 
+-          <div className="form-group" style={{ margin: 0 }}>
+-            <label className="form-label">Preferred Time Slot</label>
+-            <select className="form-select" value={bookingTime} onChange={(e) => setBookingTime(e.target.value)}>
+-              {timeSlots.map(slot => (
+-                <option key={slot} value={slot}>{slot}</option>
+-              ))}
+-            </select>
+-          </div>
++          {!isImmediate && (
++            <>
++              <div className="form-group" style={{ margin: 0 }}>
++                <label className="form-label">Service Date</label>
++                <div style={{ position: 'relative' }}>
++                  <input 
++                    type="date" 
++                    className="form-input" 
++                    min={new Date().toISOString().split('T')[0]}
++                    value={bookingDate}
++                    onChange={(e) => setBookingDate(e.target.value)}
++                    required={!isImmediate}
++                  />
++                </div>
++              </div>
++
++              <div className="form-group" style={{ margin: 0 }}>
++                <label className="form-label">Preferred Time Slot</label>
++                <select className="form-select" value={bookingTime} onChange={(e) => setBookingTime(e.target.value)}>
++                  {timeSlots.map(slot => (
++                    <option key={slot} value={slot}>{slot}</option>
++                  ))}
++                </select>
++              </div>
++            </>
++          )}
+ 
+           <div className="form-group" style={{ margin: 0 }}>
+             <label className="form-label">Service Address</label>
+             <textarea 
+               className="form-input" 
+               rows={2} 
+               placeholder="Confirm house number, block, society name..."
+               value={address}
+               onChange={(e) => setAddress(e.target.value)}
+               required
+diff --git a/src/pages/worker/BookingRequests.jsx b/src/pages/worker/BookingRequests.jsx
+index 5e435c1..5670fdc 100644
+--- a/src/pages/worker/BookingRequests.jsx
++++ b/src/pages/worker/BookingRequests.jsx
+@@ -35,23 +35,23 @@ export default function BookingRequests() {
+       toast.error('You must call & confirm with the homeowner first!')
+       return
+     }
+ 
+     try {
+       await updateBookingStatus(booking.id, 'accepted', { call_confirmed: true })
+       toast.success('Booking request accepted!')
+       
+       // Notify Homeowner
+       await createNotification(
+-        booking.homeowners.user_id,
++        booking.homeowners.id,
+         'Booking Accepted',
+-        `${worker.full_name} has accepted your booking request for ${formatDate(booking.booking_date)}!`,
++        `${worker.full_name} has accepted your booking request for ${formatDate(booking.service_date)}!`,
+         'booking',
+         { bookingId: booking.id }
+       )
+ 
+       setRequests(requests.filter(r => r.id !== booking.id))
+     } catch (err) {
+       toast.error('Failed to accept booking')
+     }
+   }
+ 
+@@ -60,21 +60,21 @@ export default function BookingRequests() {
+     if (reason === null) return // cancelled prompt
+ 
+     try {
+       await updateBookingStatus(booking.id, 'rejected', { 
+         cancellation_reason: reason || 'Cleaner is unavailable' 
+       })
+       toast.success('Booking request rejected')
+       
+       // Notify Homeowner
+       await createNotification(
+-        booking.homeowners.user_id,
++        booking.homeowners.id,
+         'Booking Rejected',
+         `${worker.full_name} rejected your booking request. Reason: ${reason || 'Unavailable'}`,
+         'booking',
+         { bookingId: booking.id }
+       )
+ 
+       setRequests(requests.filter(r => r.id !== booking.id))
+     } catch (err) {
+       toast.error('Failed to reject booking')
+     }
+@@ -98,21 +98,21 @@ export default function BookingRequests() {
+             </p>
+           </div>
+         ) : (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+             {requests.map(r => (
+               <div key={r.id} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                   <div>
+                     <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{r.homeowners?.full_name}</h3>
+                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+-                      Requested: {formatDate(r.booking_date)} at {formatTime(r.booking_time)}
++                      Requested: {formatDate(r.service_date)} at {formatTime(r.service_time)}
+                     </p>
+                     <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                       📍 <strong>Address:</strong> {r.address}
+                     </p>
+                     {r.notes && (
+                       <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '4px', marginTop: '0.5rem' }}>
+                         📝 <strong>Notes:</strong> {r.notes}
+                       </p>
+                     )}
+                   </div>
+diff --git a/src/pages/worker/Dashboard.jsx b/src/pages/worker/Dashboard.jsx
+index b2e3f58..adf5556 100644
+--- a/src/pages/worker/Dashboard.jsx
++++ b/src/pages/worker/Dashboard.jsx
+@@ -54,21 +54,21 @@ export default function WorkerDashboard() {
+       await refreshProfile()
+     } catch (err) {
+       toast.error('Failed to update status')
+     }
+   }
+ 
+   // Pre-process bookings data for Recharts (bookings per day)
+   const getChartData = () => {
+     const counts = {}
+     bookings.slice(0, 10).forEach(b => {
+-      const date = formatDate(b.booking_date)
++      const date = formatDate(b.service_date)
+       counts[date] = (counts[date] || 0) + 1
+     })
+     return Object.keys(counts).map(k => ({ date: k, Bookings: counts[k] }))
+   }
+ 
+   return (
+     <WorkerLayout>
+       <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+         
+         {/* Welcome Block */}
+@@ -163,21 +163,21 @@ export default function WorkerDashboard() {
+               <button onClick={() => navigate('/worker/requests')} className="btn btn-ghost btn-sm" style={{ padding: '2px 8px' }}>
+                 View All
+               </button>
+             </div>
+             
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', overflowY: 'auto', flex: 1 }}>
+               {bookings.filter(b => b.status === 'pending').slice(0, 3).map(b => (
+                 <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
+                   <div>
+                     <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>{b.homeowners?.full_name}</h4>
+-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatDate(b.booking_date)} at {b.booking_time}</p>
++                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatDate(b.service_date)} at {b.service_time}</p>
+                   </div>
+                   <span className={`badge ${getStatusClass(b.status)}`}>{b.status}</span>
+                 </div>
+               ))}
+               {bookings.filter(b => b.status === 'pending').length === 0 && (
+                 <p style={{ margin: 'auto', color: 'var(--text-muted)', fontSize: '0.9rem' }}>No pending requests</p>
+               )}
+             </div>
+           </div>
+         </div>
+diff --git a/src/pages/worker/EditProfile.jsx b/src/pages/worker/EditProfile.jsx
+index 8d6d294..cb866a5 100644
+--- a/src/pages/worker/EditProfile.jsx
++++ b/src/pages/worker/EditProfile.jsx
+@@ -182,21 +182,21 @@ export default function EditProfile() {
+ 
+         <form onSubmit={handleSaveProfile} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+           
+           {/* Profile & UPI Upload blocks */}
+           <div className="grid-2">
+             <div className="form-group" style={{ margin: 0 }}>
+               <label className="form-label">Profile Avatar Image</label>
+               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                 <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', gap: '4px' }}>
+                   <FileUp size={14} /> Upload Avatar
+-                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => setAvatarFile(e.target.files[0])} />
++                  <input type="file" accept="image/*" capture="user" style={{ display: 'none' }} onChange={e => setAvatarFile(e.target.files[0])} />
+                 </label>
+                 <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                   {avatarFile ? avatarFile.name : 'No file chosen'}
+                 </span>
+               </div>
+             </div>
+ 
+             <div className="form-group" style={{ margin: 0 }}>
+               <label className="form-label">UPI QR Scanner Image</label>
+               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+diff --git a/src/pages/worker/UpcomingJobs.jsx b/src/pages/worker/UpcomingJobs.jsx
+index 9f5e15a..1cff11d 100644
+--- a/src/pages/worker/UpcomingJobs.jsx
++++ b/src/pages/worker/UpcomingJobs.jsx
+@@ -83,21 +83,21 @@ export default function UpcomingJobs() {
+             </p>
+           </div>
+         ) : (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+             {jobs.map(j => (
+               <div key={j.id} className="card glass" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                   <div>
+                     <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{j.homeowners?.full_name}</h3>
+                     <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+-                      Schedule: {formatDate(j.booking_date)} at {formatTime(j.booking_time)}
++                      Schedule: {formatDate(j.service_date)} at {formatTime(j.service_time)}
+                     </p>
+                     <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+                       📍 <strong>Address:</strong> {j.address}
+                     </p>
+                   </div>
+ 
+                   <div style={{ display: 'flex', gap: '0.5rem' }}>
+                     <a href={`tel:${j.homeowners?.phone}`} className="btn btn-secondary btn-sm">
+                       <Phone size={14} /> Call
+                     </a>
+diff --git a/src/services/auth.js b/src/services/auth.js
+index 5082d04..75d610a 100644
+--- a/src/services/auth.js
++++ b/src/services/auth.js
+@@ -52,27 +52,27 @@ export async function getUserProfile(userId) {
+     .eq('id', userId)
+     .single()
+   if (error) return null
+   return data
+ }
+ 
+ export async function createHomeownerProfile(userId, roleId, profileData) {
+   // 1. Update general users table
+   const { error: userError } = await supabase
+     .from('users')
+-    .update({
++    .upsert({
++      id: userId,
+       role_id: roleId,
+       full_name: profileData.fullName,
+       phone: profileData.phone,
+       email: profileData.email || null,
+     })
+-    .eq('id', userId)
+   
+   if (userError) throw userError
+ 
+   // 2. Insert homeowner detailed profile
+   const { data, error } = await supabase
+     .from('homeowners')
+     .insert([{
+       user_id: userId,
+       full_name: profileData.fullName,
+       email: profileData.email || null,
+@@ -91,27 +91,27 @@ export async function createHomeownerProfile(userId, roleId, profileData) {
+     .single()
+ 
+   if (error) throw error
+   return data
+ }
+ 
+ export async function createWorkerProfile(userId, roleId, profileData) {
+   // 1. Update general users table
+   const { error: userError } = await supabase
+     .from('users')
+-    .update({
++    .upsert({
++      id: userId,
+       role_id: roleId,
+       full_name: profileData.fullName,
+       phone: profileData.phone,
+       email: profileData.email || null,
+     })
+-    .eq('id', userId)
+   
+   if (userError) throw userError
+ 
+   // 2. Insert worker profile
+   const { data, error } = await supabase
+     .from('workers')
+     .insert([{
+       user_id: userId,
+       full_name: profileData.fullName,
+       email: profileData.email || null,
+diff --git a/src/services/bookings.js b/src/services/bookings.js
+index b6e2c32..322b1c5 100644
+--- a/src/services/bookings.js
++++ b/src/services/bookings.js
+@@ -118,10 +118,75 @@ export async function toggleFavorite(homeownerId, workerId, isFav) {
+ }
+ 
+ export async function getFavorites(homeownerId) {
+   const { data, error } = await supabase
+     .from('favorites')
+     .select('*, workers(*)')
+     .eq('homeowner_id', homeownerId)
+   if (error) throw error
+   return data
+ }
++
++export async function saveHashedCode(bookingId, hashedCode, codeType) {
++  // Delete any existing active codes of this type first to prevent duplicates
++  await supabase
++    .from('booking_verification_codes')
++    .delete()
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++
++  const expiryTime = new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 minutes
++
++  const { data, error } = await supabase
++    .from('booking_verification_codes')
++    .insert([{
++      booking_id: bookingId,
++      hashed_code: hashedCode,
++      expiry_time: expiryTime,
++      code_type: codeType,
++      used: false
++    }])
++    .select()
++    .single()
++
++  if (error) throw error
++  return data
++}
++
++export async function getActiveCode(bookingId, codeType) {
++  const { data, error } = await supabase
++    .from('booking_verification_codes')
++    .select('*')
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++    .eq('used', false)
++    .gt('expiry_time', new Date().toISOString())
++    .maybeSingle()
++
++  if (error) throw error
++  return data
++}
++
++export async function deleteCode(bookingId, codeType) {
++  const { error } = await supabase
++    .from('booking_verification_codes')
++    .delete()
++    .eq('booking_id', bookingId)
++    .eq('code_type', codeType)
++
++  if (error) throw error
++}
++
++export async function verifyBookingCodeRPC(bookingId, enteredCode, lat, lng) {
++  const { data, error } = await supabase
++    .rpc('verify_booking_code', {
++      p_booking_id: bookingId,
++      p_entered_code: enteredCode,
++      p_cleaner_lat: lat,
++      p_cleaner_lng: lng
++    })
++
++  if (error) throw error
++  return data
++}
++
++export const verifyBookingCode = verifyBookingCodeRPC;
+diff --git a/src/services/locations.js b/src/services/locations.js
+index 30eb35b..2f10dc5 100644
+--- a/src/services/locations.js
++++ b/src/services/locations.js
+@@ -75,21 +75,21 @@ export async function searchSocieties(query, cityId = null) {
+  * @param {object} param0 
+  * @returns {Promise<object>} Created/existing society
+  */
+ export async function findOrCreateSociety({ name, areaId, cityId, latitude, longitude, address }) {
+   const normalizedName = name.trim()
+   
+   // 1. Check if society exists in this city
+   const { data: existing, error: checkError } = await supabase
+     .from('societies')
+     .select('*')
+-    .eq('name', normalizedName)
++    .ilike('name', normalizedName)
+     .eq('city_id', cityId)
+     .maybeSingle()
+ 
+   if (checkError) throw checkError
+   if (existing) return existing
+ 
+   // 2. If it does not exist, insert it
+   const { data: created, error: insertError } = await supabase
+     .from('societies')
+     .insert([{
+@@ -99,10 +99,84 @@ export async function findOrCreateSociety({ name, areaId, cityId, latitude, long
+       latitude,
+       longitude,
+       address
+     }])
+     .select()
+     .single()
+ 
+   if (insertError) throw insertError
+   return created
+ }
++
++/**
++ * Find or create a state
++ */
++export async function findOrCreateState(name) {
++  const normalizedName = name.trim()
++  const { data: existing, error: checkError } = await supabase
++    .from('states')
++    .select('*')
++    .ilike('name', normalizedName)
++    .maybeSingle()
++
++  if (checkError) throw checkError
++  if (existing) return existing
++
++  const { data: created, error: insertError } = await supabase
++    .from('states')
++    .insert([{ name: normalizedName }])
++    .select()
++    .single()
++
++  if (insertError) throw insertError
++  return created
++}
++
++/**
++ * Find or create a city
++ */
++export async function findOrCreateCity(name, stateId) {
++  const normalizedName = name.trim()
++  const { data: existing, error: checkError } = await supabase
++    .from('cities')
++    .select('*')
++    .ilike('name', normalizedName)
++    .eq('state_id', stateId)
++    .maybeSingle()
++
++  if (checkError) throw checkError
++  if (existing) return existing
++
++  const { data: created, error: insertError } = await supabase
++    .from('cities')
++    .insert([{ name: normalizedName, state_id: stateId }])
++    .select()
++    .single()
++
++  if (insertError) throw insertError
++  return created
++}
++
++/**
++ * Find or create an area
++ */
++export async function findOrCreateArea(name, cityId) {
++  const normalizedName = name.trim()
++  const { data: existing, error: checkError } = await supabase
++    .from('areas')
++    .select('*')
++    .ilike('name', normalizedName)
++    .eq('city_id', cityId)
++    .maybeSingle()
++
++  if (checkError) throw checkError
++  if (existing) return existing
++
++  const { data: created, error: insertError } = await supabase
++    .from('areas')
++    .insert([{ name: normalizedName, city_id: cityId }])
++    .select()
++    .single()
++
++  if (insertError) throw insertError
++  return created
++}
+diff --git a/src/styles/globals.css b/src/styles/globals.css
+index 7fb7abd..9670ce9 100644
+--- a/src/styles/globals.css
++++ b/src/styles/globals.css
+@@ -426,10 +426,177 @@ a:hover {
+ }
+ 
+ ::-webkit-scrollbar-thumb {
+   background: var(--bg-tertiary);
+   border-radius: 4px;
+ }
+ 
+ ::-webkit-scrollbar-thumb:hover {
+   background: var(--text-muted);
+ }
++
++/* ==========================================================================
++   LAYOUT UTILITIES (RESPONSIVE & MOBILE-FIRST)
++   ========================================================================== */
++
++.app-layout {
++  display: flex;
++  min-height: 100vh;
++  min-height: 100dvh;
++  background: var(--bg-primary);
++  position: relative;
++  flex-direction: column;
++}
++
++/* Hide sidebar by default on mobile */
++.app-sidebar {
++  display: none;
++  width: 260px;
++  padding: 2rem 1.5rem;
++  flex-direction: column;
++  gap: 2rem;
++  border-right: 1px solid var(--border-glass);
++  position: sticky;
++  top: 0;
++  height: 100vh;
++  z-index: 40;
++  background: var(--bg-primary); /* Fallback for mobile */
++  transition: transform 0.3s ease;
++}
++
++.app-main {
++  flex: 1;
++  display: flex;
++  flex-direction: column;
++  min-width: 0;
++  width: 100%;
++  padding-bottom: calc(70px + env(safe-area-inset-bottom)); /* Space for bottom nav */
++}
++
++.app-sidebar.glass {
++  background: var(--bg-glass);
++}
++
++.mobile-bottom-nav {
++  display: flex;
++  position: fixed;
++  bottom: 0;
++  left: 0;
++  right: 0;
++  background: var(--bg-glass);
++  backdrop-filter: blur(16px);
++  -webkit-backdrop-filter: blur(16px);
++  border-top: 1px solid var(--border-glass);
++  padding: 0.5rem 1rem;
++  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
++  justify-content: space-around;
++  align-items: center;
++  z-index: 50;
++  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.05);
++}
++
++.bottom-nav-item {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 4px;
++  color: var(--text-secondary);
++  font-size: 10px;
++  font-weight: 600;
++  padding: 0.5rem;
++  border-radius: var(--radius-md);
++  transition: all var(--transition-fast);
++  text-decoration: none;
++  position: relative;
++}
++
++.bottom-nav-item.active {
++  color: var(--primary);
++}
++
++.bottom-nav-item.active .icon-container {
++  transform: translateY(-4px);
++  background: var(--primary-light);
++  box-shadow: 0 4px 12px var(--primary-glow);
++}
++
++.bottom-nav-item .icon-container {
++  padding: 6px;
++  border-radius: 12px;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  transition: all var(--transition-fast);
++}
++
++.menu-toggle {
++  display: none;
++}
++
++/* Desktop layout overriding mobile */
++@media (min-width: 1024px) {
++  .app-layout {
++    flex-direction: row;
++  }
++  .app-sidebar {
++    display: flex;
++  }
++  .mobile-bottom-nav {
++    display: none;
++  }
++  .app-main {
++    padding-bottom: 0;
++  }
++}
++
++@media (max-width: 1023px) {
++  .app-sidebar {
++    position: fixed;
++    transform: translateX(-100%);
++  }
++  
++  .app-sidebar.open {
++    transform: translateX(0);
++  }
++
++  .sidebar-overlay {
++    position: fixed;
++    inset: 0;
++    background: rgba(0, 0, 0, 0.5);
++    backdrop-filter: blur(4px);
++    z-index: 30;
++    opacity: 0;
++    pointer-events: none;
++    transition: opacity 0.3s ease;
++  }
++  
++  .sidebar-overlay.open {
++    opacity: 1;
++    pointer-events: auto;
++  }
++
++  .menu-toggle {
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    background: transparent;
++    border: none;
++    color: var(--text-primary);
++    cursor: pointer;
++    padding: 0.5rem;
++    margin-right: 0.5rem;
++    border-radius: var(--radius-sm);
++  }
++  
++  .menu-toggle:hover {
++    background: var(--bg-tertiary);
++  }
++  
++  .app-header {
++    padding: 0 1rem !important;
++  }
++  
++  .app-main-content {
++    padding: 1rem !important;
++  }
++}
++
+diff --git a/src/supabase/migrations/20260705000000_booking_verification.sql b/src/supabase/migrations/20260705000000_booking_verification.sql
+index 225837e..74affd9 100644
+--- a/src/supabase/migrations/20260705000000_booking_verification.sql
++++ b/src/supabase/migrations/20260705000000_booking_verification.sql
+@@ -90,20 +90,21 @@ CREATE OR REPLACE FUNCTION verify_booking_code(
+     p_cleaner_lng DOUBLE PRECISION
+ ) RETURNS JSONB AS $$
+ DECLARE
+     v_code_record RECORD;
+     v_booking_record RECORD;
+     v_distance DOUBLE PRECISION;
+     v_entered_hash TEXT;
+     v_now TIMESTAMP WITH TIME ZONE := NOW();
+     v_duration INTEGER;
+     v_expired_type TEXT;
++    v_scheduled_start TIMESTAMP WITH TIME ZONE;
+ BEGIN
+     -- Compute the SHA-256 hash of the entered code
+     v_entered_hash := encode(digest(p_entered_code, 'sha256'), 'hex');
+ 
+     -- Check if the entered code exists but is expired
+     SELECT code_type INTO v_expired_type 
+     FROM booking_verification_codes 
+     WHERE booking_id = p_booking_id 
+       AND hashed_code = v_entered_hash 
+       AND expiry_time < v_now;
+@@ -148,52 +149,72 @@ BEGIN
+     -- Check authorization: worker_id must match auth.uid()
+     -- Accommodates both worker_id = auth.uid() directly or mapping via workers table
+     IF v_booking_record.worker_id != auth.uid() AND NOT EXISTS (
+         SELECT 1 FROM workers w 
+         WHERE w.id = v_booking_record.worker_id 
+           AND w.user_id = auth.uid()
+     ) THEN
+         RETURN jsonb_build_object('success', false, 'message', 'Unauthorized: You are not the assigned cleaner.');
+     END IF;
+ 
+-    -- Distance check (100 meters limit)
+-    v_distance := calculate_distance(
+-        v_booking_record.latitude, v_booking_record.longitude,
+-        p_cleaner_lat, p_cleaner_lng
+-    );
++    -- Distance check (100 meters limit, conditional on coordinates availability)
++    IF v_booking_record.latitude IS NOT NULL AND v_booking_record.longitude IS NOT NULL 
++       AND p_cleaner_lat IS NOT NULL AND p_cleaner_lng IS NOT NULL THEN
++        v_distance := calculate_distance(
++            v_booking_record.latitude, v_booking_record.longitude,
++            p_cleaner_lat, p_cleaner_lng
++        );
+ 
+-    IF v_distance > 100 THEN
++        IF v_distance > 100 THEN
++            INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
++            VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
++                jsonb_build_object(
++                    'error', 'Distance limit exceeded',
++                    'distance_meters', v_distance,
++                    'type', v_code_record.code_type,
++                    'gps', jsonb_build_object('lat', p_cleaner_lat, 'lng', p_cleaner_lng)
++                )
++            );
++            RETURN jsonb_build_object('success', false, 'message', 'You must be within 100 meters of the booking location.');
++        END IF;
++    ELSE
++        v_distance := NULL;
+         INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+-        VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
++        VALUES (auth.uid(), 'gps_missing', 'booking', p_booking_id, 
+             jsonb_build_object(
+-                'error', 'Distance limit exceeded',
+-                'distance_meters', v_distance,
++                'gps_missing', true,
+                 'type', v_code_record.code_type,
+                 'gps', jsonb_build_object('lat', p_cleaner_lat, 'lng', p_cleaner_lng)
+             )
+         );
+-        RETURN jsonb_build_object('success', false, 'message', 'You must be within 100 meters of the booking location.');
+     END IF;
+ 
+     -- Code type specific checks and updates
+     IF v_code_record.code_type = 'start' THEN
+         -- Check booking status
+         IF v_booking_record.status != 'arrived' THEN
+             INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+             VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+                 jsonb_build_object('error', 'Invalid booking status', 'status', v_booking_record.status, 'type', 'start'));
+             RETURN jsonb_build_object('success', false, 'message', 'Booking status must be arrived to start cleaning.');
+         END IF;
+ 
++        -- Combine service_date and service_time and interpret as Asia/Kolkata timezone
++        v_scheduled_start := (v_booking_record.service_date + v_booking_record.service_time) AT TIME ZONE 'Asia/Kolkata';
++
++        IF v_scheduled_start IS NULL THEN
++            RETURN jsonb_build_object('success', false, 'message', 'Invalid scheduled service date or time.');
++        END IF;
++
+         -- Verify scheduled window (1 hour early to 2 hours late allowed)
+-        IF v_now < (v_booking_record.service_date + v_booking_record.service_time) - INTERVAL '1 hour' OR
+-           v_now > (v_booking_record.service_date + v_booking_record.service_time) + INTERVAL '2 hours' THEN
++        IF v_now < v_scheduled_start - INTERVAL '1 hour' OR
++           v_now > v_scheduled_start + INTERVAL '2 hours' THEN
+             
+             INSERT INTO activity_logs (user_id, action, entity_type, entity_id, metadata)
+             VALUES (auth.uid(), 'verification_failed', 'booking', p_booking_id, 
+                 jsonb_build_object('error', 'Outside scheduled window', 'type', 'start'));
+                 
+             RETURN jsonb_build_object('success', false, 'message', 'You can only start within the scheduled booking window.');
+         END IF;
+ 
+         UPDATE bookings 
+         SET status = 'started',
