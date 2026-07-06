@@ -17,6 +17,25 @@ export default function BookingRequests() {
   // Track checkboxes for confirmation calls per booking ID
   const [callConfirmedMap, setCallConfirmedMap] = useState({})
 
+  const getFullAddress = (bookingAddress, homeowner) => {
+    if (!homeowner) return bookingAddress || ''
+    const parts = []
+    const lowerAddr = (bookingAddress || '').toLowerCase()
+    
+    if (homeowner.house_number && !lowerAddr.includes(homeowner.house_number.toLowerCase())) {
+      parts.push(`House/Flat No: ${homeowner.house_number}`)
+    }
+    if (homeowner.society_name && !lowerAddr.includes(homeowner.society_name.toLowerCase())) {
+      parts.push(`Society: ${homeowner.society_name}`)
+    }
+    if (bookingAddress) {
+      parts.push(bookingAddress)
+    } else if (homeowner.address) {
+      parts.push(homeowner.address)
+    }
+    return parts.join(', ')
+  }
+
   useEffect(() => {
     if (worker) {
       getWorkerBookings(worker.id)
@@ -124,7 +143,7 @@ export default function BookingRequests() {
                       Requested: {formatDate(r.service_date)} at {formatTime(r.service_time)}
                     </p>
                     <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
-                      📍 <strong>Address:</strong> {r.address}
+                      📍 <strong>Address:</strong> {getFullAddress(r.address, r.homeowners)}
                     </p>
                     {r.notes && (
                       <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '4px', marginTop: '0.5rem' }}>
