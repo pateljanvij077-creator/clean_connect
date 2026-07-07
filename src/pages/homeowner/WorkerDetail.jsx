@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import HomeOwnerLayout from '../../components/layout/HomeOwnerLayout'
 import { getWorkerById } from '../../services/workers'
 import { getStatusClass, formatCurrency } from '../../utils/helpers'
-import { Star, ArrowLeft, Phone, MessageCircle, MapPin, BadgeCheck, ShieldAlert, Briefcase, Globe } from 'lucide-react'
+import { Star, ArrowLeft, Phone, MessageCircle, MapPin, BadgeCheck, ShieldAlert, Briefcase, Globe, AlertCircle } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -237,15 +237,31 @@ export default function WorkerDetail() {
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem', background: 'var(--primary-light)', borderRadius: 'var(--radius-sm)' }}>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Hourly Rate</span>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Approx. Hourly Rate</span>
                 <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{formatCurrency(worker.pricing_per_hour)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)' }}>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Daily Rate</span>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Approx. Daily Rate</span>
                 <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{formatCurrency(worker.pricing_per_day)}</span>
               </div>
+              
+              <div style={{
+                display: 'flex',
+                gap: '6px',
+                background: 'rgba(59, 130, 246, 0.05)',
+                border: '1px solid rgba(59, 130, 246, 0.1)',
+                padding: '0.5rem 0.75rem',
+                borderRadius: '8px',
+                marginTop: '4px'
+              }}>
+                <AlertCircle size={14} color="var(--primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0, lineHeight: '1.25' }}>
+                  Rates are approximate. The cleaner will confirm the final paid amount upon service completion.
+                </p>
+              </div>
+
               {worker.pricing_note && (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '4px' }}>
                   Note: {worker.pricing_note}
                 </p>
               )}

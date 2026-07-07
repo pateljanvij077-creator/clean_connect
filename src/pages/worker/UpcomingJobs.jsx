@@ -23,6 +23,7 @@ const VERIFY_STATUS = {
  */
 function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose }) {
   const [code, setCode] = useState('')
+  const [amountPaid, setAmountPaid] = useState(job.total_price || '')
   const [verifying, setVerifying] = useState(false)
   const [requesting, setRequesting] = useState(false)
   const inputRef = useRef(null)
@@ -35,6 +36,10 @@ function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose
     e.preventDefault()
     if (code.length !== 6 || !/^\d{6}$/.test(code)) {
       toast.error('Please enter the full 6-digit code')
+      return
+    }
+    if (codeType === 'finish' && (!amountPaid || parseFloat(amountPaid) < 0)) {
+      toast.error('Please enter a valid amount paid')
       return
     }
     setVerifying(true)
@@ -61,6 +66,16 @@ function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose
 
       const response = await verifyBookingCodeRPC(job.id, code, coords.lat, coords.lng)
       if (response?.success) {
+        if (codeType === 'finish') {
+          try {
+            await updateBookingStatus(job.id, 'completed', {
+              total_price: parseFloat(amountPaid),
+              payment_status: 'paid'
+            })
+          } catch (updateErr) {
+            console.error('Failed to update actual paid amount:', updateErr)
+          }
+        }
         toast.success(response.message || 'Verified! Proceeding…')
         onSuccess()
       } else {
@@ -148,6 +163,26 @@ function VerificationModal({ job, codeType, onSuccess, onRequestNewCode, onClose
               required
             />
           </div>
+
+          {codeType === 'finish' && (
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Amount Paid by Homeowner (₹)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className="form-input"
+                placeholder="Enter amount paid"
+                value={amountPaid}
+                onChange={(e) => setAmountPaid(e.target.value)}
+                style={{ fontSize: '1.1rem', fontWeight: 600 }}
+                required
+              />
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Estimated fare: ₹{job.total_price || 0}. Update this to the actual amount paid by the homeowner.
+              </p>
+            </div>
+          )}
 
           <button
             type="submit"

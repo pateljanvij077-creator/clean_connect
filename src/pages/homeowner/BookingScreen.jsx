@@ -6,7 +6,7 @@ import { createBooking } from '../../services/bookings'
 import { createNotification } from '../../services/notifications'
 import { useAuth } from '../../hooks/useAuth'
 import { formatCurrency } from '../../utils/helpers'
-import { ArrowLeft, Calendar, Clock, MapPin, QrCode } from 'lucide-react'
+import { ArrowLeft, Calendar, Clock, MapPin, QrCode, AlertCircle } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 
 export default function BookingScreen() {
@@ -261,6 +261,33 @@ export default function BookingScreen() {
             >
               <QrCode size={16} /> View Worker's UPI QR Code
             </button>
+          )}
+
+          {/* Estimated pricing summary */}
+          {worker && (
+            <div className="card glass" style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)', display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Estimated service duration:</span>
+                <span style={{ fontWeight: 600 }}>2 hours (default)</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Approx. hourly rate:</span>
+                <span style={{ fontWeight: 600 }}>{formatCurrency(worker.pricing_per_hour)}/hr</span>
+              </div>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-glass)', margin: '0.5rem 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Estimated Total:</span>
+                <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)' }}>
+                  {formatCurrency(worker.pricing_per_hour * 2)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'flex-start' }}>
+                <AlertCircle size={14} color="var(--primary)" style={{ flexShrink: 0, marginTop: '1px' }} />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0, lineHeight: '1.2' }}>
+                  This is an estimated price. The cleaner will record the final actual paid amount at check-out.
+                </p>
+              </div>
+            </div>
           )}
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={submitting}>
