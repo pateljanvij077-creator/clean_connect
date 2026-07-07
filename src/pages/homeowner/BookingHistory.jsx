@@ -4,7 +4,7 @@ import { getHomeownerBookings, updateBookingStatus, createReview, saveHashedCode
 import { createNotification } from '../../services/notifications'
 import { useAuth } from '../../hooks/useAuth'
 import { formatDate, formatTime, getStatusClass } from '../../utils/helpers'
-import { Star, MessageCircle, AlertCircle, X, Clock, RefreshCw, Copy, Check, History } from 'lucide-react'
+import { Star, MessageCircle, AlertCircle, X, Clock, RefreshCw, Copy, Check, History, Phone } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { supabase } from '../../supabase/client'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -40,7 +40,7 @@ function VerificationCodeCard({ bookingId, activeCode, onRegenerate }) {
       return Math.max(0, Math.floor((activeCode.expiry - Date.now()) / 1000))
     }
 
-    setTimeLeft(calculateTimeLeft())
+    timeLeft === 0 && setTimeLeft(calculateTimeLeft())
 
     const timer = setInterval(() => {
       const remaining = calculateTimeLeft()
@@ -109,7 +109,6 @@ function VerificationCodeCard({ bookingId, activeCode, onRegenerate }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
         {isExpired ? (
-          // M1: Hide stale digits when the code has expired — show a clear prompt instead
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -186,6 +185,7 @@ export default function BookingHistory() {
   const { homeowner, user, loading: authLoading } = useAuth()
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('all')
 
   // Review modal state
   const [selectedBooking, setSelectedBooking] = useState(null)
@@ -197,6 +197,14 @@ export default function BookingHistory() {
   const [activeCodes, setActiveCodes] = useState({})
   const activeCodesRef = useRef({})
   const generatingRef = useRef({})
+
+  const filteredBookings = bookings.filter(b => {
+    if (activeTab === 'all') return true
+    if (activeTab === 'active') return ['pending', 'accepted', 'arrived', 'finishing'].includes(b.status)
+    if (activeTab === 'completed') return b.status === 'completed'
+    if (activeTab === 'cancelled') return b.status === 'cancelled'
+    return true
+  })
 
   // Update ref when state changes to avoid stale closures in checkAndGenerateCodes
   useEffect(() => {
@@ -434,9 +442,25 @@ export default function BookingHistory() {
     }
   }
 
+  const tabs = [
+    { id: 'all', label: 'All' },
+    { id: 'active', label: 'Active' },
+    { id: 'completed', label: 'Completed' },
+    { id: 'cancelled', label: 'Cancelled' }
+  ]
+
+  const getStatusBorderColor = (status) => {
+    switch (status) {
+      case 'completed': return '4px solid var(--success)'
+      case 'cancelled': return '4px solid var(--danger)'
+      case 'pending': return '4px solid var(--warning)'
+      default: return '4px solid var(--primary)'
+    }
+  }
+
   return (
     <HomeOwnerLayout>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '800px', margin: '0 auto' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '800px', margin: '0 auto', paddingBottom: '2rem' }}>
 
         {/* Animated page header */}
         <motion.div
@@ -457,6 +481,86 @@ export default function BookingHistory() {
             )}
           </div>
         </motion.div>
+
+        {/* Animated Segmented Tabs */}
+        {!loading && bookings.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              display: 'flex',
+              background: 'var(--bg-tertiary)',
+              padding: '4px',
+              borderRadius: '30px',
+              border: '1px solid var(--border-glass)',
+              position: 'relative',
+              gap: '2px',
+              width: '100%',
+              overflow: 'hidden'
+            }}
+          >
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id
+              const tabCount = tab.id === 'all' 
+                ? bookings.length 
+                : tab.id === 'active' 
+                  ? bookings.filter(b => ['pending', 'accepted', 'arrived', 'finishing'].includes(b.status)).length
+                  : bookings.filter(b => b.status === tab.id).length
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    flex: 1,
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: '26px',
+                    padding: '10px 8px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: isActive ? 'var(--primary)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transition: 'color var(--transition-fast)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    zIndex: 1
+                  }}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeTabIndicator"
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        background: 'var(--bg-secondary)',
+                        borderRadius: '26px',
+                        border: '1px solid var(--border-glass)',
+                        boxShadow: 'var(--shadow-sm)',
+                        zIndex: -1
+                      }}
+                      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                  <span>{tab.label}</span>
+                  <span style={{
+                    fontSize: '9px',
+                    padding: '2px 5px',
+                    borderRadius: '10px',
+                    background: isActive ? 'var(--primary-light)' : 'rgba(255,255,255,0.06)',
+                    color: isActive ? 'var(--primary)' : 'var(--text-muted)',
+                    fontWeight: 800
+                  }}>
+                    {tabCount}
+                  </span>
+                </button>
+              )
+            })}
+          </motion.div>
+        )}
 
         {loading ? (
           <motion.div
@@ -486,12 +590,23 @@ export default function BookingHistory() {
               Your cleaning scheduling requests will appear here once you book a cleaner.
             </p>
           </motion.div>
+        ) : filteredBookings.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="card glass flex-center"
+            style={{ padding: '3rem 2rem', textAlign: 'center', color: 'var(--text-muted)' }}
+          >
+            <AlertCircle size={32} style={{ marginBottom: '0.5rem', opacity: 0.6 }} />
+            <p style={{ fontSize: '0.9rem' }}>No bookings matching the "{activeTab}" filter.</p>
+          </motion.div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <AnimatePresence mode="popLayout">
-              {bookings.map((b, idx) => {
+              {filteredBookings.map((b, idx) => {
                 const codeType = b.status === 'arrived' ? 'start' : (b.status === 'finishing' ? 'finish' : null)
                 const activeCode = codeType ? activeCodes[b.id] : null
+                const isBookingActive = ['pending', 'accepted', 'arrived', 'finishing'].includes(b.status)
 
                 return (
                   <motion.div
@@ -508,28 +623,84 @@ export default function BookingHistory() {
                     }}
                     style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
                   >
-                    <div className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div 
+                      className="card glass" 
+                      style={{ 
+                        display: 'flex', 
+                        gap: '1rem', 
+                        flexWrap: 'wrap', 
+                        alignItems: 'center',
+                        borderLeft: getStatusBorderColor(b.status),
+                        padding: '1.25rem',
+                        transition: 'transform var(--transition-fast)',
+                        boxShadow: 'var(--shadow-sm)'
+                      }}
+                    >
                       {(b.workers?.selfie_url || b.workers?.avatar_url) && (
                         <motion.img
                           src={b.workers.selfie_url || b.workers.avatar_url}
                           alt={b.workers.full_name}
                           whileHover={{ scale: 1.08 }}
-                          style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }}
+                          style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--border-glass)' }}
                         />
                       )}
 
                       <div style={{ flex: 1, minWidth: '200px' }}>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{b.workers?.full_name}</h3>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                          {formatDate(b.service_date)} at {formatTime(b.service_time)}
+                        <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)' }}>{b.workers?.full_name}</h3>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                          <Clock size={12} />
+                          {formatDate(b.service_date)} • {formatTime(b.service_time)}
                         </p>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          Payment: <span style={{ textTransform: 'capitalize' }}>{b.payment_method}</span> ({b.payment_status})
-                        </p>
+                        
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            Fare: <strong style={{ color: 'var(--success)' }}>{formatCurrency(b.total_price)}</strong>
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>•</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            Payment: <strong style={{ textTransform: 'capitalize' }}>{b.payment_method}</strong> ({b.payment_status})
+                          </span>
+                        </div>
+
+                        {/* Cleaner Call Actions for active bookings */}
+                        {isBookingActive && b.workers?.phone && (
+                          <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                            <motion.button
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                window.open(`tel:${b.workers.phone}`)
+                              }}
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '6px 10px', height: 'auto', borderRadius: '8px' }}
+                              title="Call Cleaner"
+                            >
+                              <Phone size={13} />
+                              <span style={{ fontSize: '11px', fontWeight: 700 }}>Call</span>
+                            </motion.button>
+                            <motion.button
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const cleanPhone = b.workers.phone.replace(/[^0-9]/g, '')
+                                const msg = encodeURIComponent(`Hello ${b.workers.full_name}, I am contacting you regarding our booking on CleanConnect.`)
+                                window.open(`https://wa.me/91${cleanPhone}?text=${msg}`, '_blank')
+                              }}
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '6px 10px', height: 'auto', borderRadius: '8px' }}
+                              title="Chat WhatsApp"
+                            >
+                              <MessageCircle size={13} />
+                              <span style={{ fontSize: '11px', fontWeight: 700 }}>WhatsApp</span>
+                            </motion.button>
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <span className={`badge ${getStatusClass(b.status)}`}>
+                        <span className={`badge ${getStatusClass(b.status)}`} style={{ fontWeight: 800 }}>
                           {b.status}
                         </span>
 
