@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Sparkles, MapPin, Plus, Trash2, Search } from 'lucide-react'
+import { Sparkles, MapPin, Plus, Trash2, Search, Navigation } from 'lucide-react'
 import { workerSignupSchema } from '../../utils/validators'
 import { signUp, signIn, createWorkerProfile, getRoles } from '../../services/auth'
 import { getStates, getCities, getAreas, searchSocieties, findOrCreateState, findOrCreateCity, findOrCreateArea, findOrCreateSociety } from '../../services/locations'
@@ -110,13 +110,38 @@ export default function WorkerSignup() {
   useEffect(() => {
     const matchedCity = citiesList.find(c => c.name.toLowerCase() === (currentLoc.cityName || '').toLowerCase())
     const cityId = matchedCity ? matchedCity.id : null
+    const matchedArea = areasList.find(a => a.name.toLowerCase() === (currentLoc.areaName || '').toLowerCase())
+    const areaId = matchedArea ? matchedArea.id : null
 
-    if (currentLoc.societyName && currentLoc.societyName.length >= 2 && showSocietySuggestions) {
-      searchSocieties(currentLoc.societyName, cityId).then(setSocietiesList)
+    if (cityId) {
+      if (currentLoc.societyName && currentLoc.societyName.length >= 2) {
+        searchSocieties(currentLoc.societyName, cityId).then(setSocietiesList)
+      } else if (showSocietySuggestions) {
+        let query = supabase
+          .from('societies')
+          .select('*, areas(name, city_id), cities(name)')
+          .order('name', { ascending: true })
+        
+        if (areaId) {
+          query = query.eq('area_id', areaId)
+        } else {
+          query = query.eq('city_id', cityId)
+        }
+
+        query.then(({ data, error }) => {
+          if (!error && data) {
+            setSocietiesList(data)
+          } else {
+            setSocietiesList([])
+          }
+        })
+      } else {
+        setSocietiesList([])
+      }
     } else {
       setSocietiesList([])
     }
-  }, [currentLoc.societyName, currentLoc.cityName, citiesList, showSocietySuggestions])
+  }, [currentLoc.societyName, currentLoc.cityName, currentLoc.areaName, citiesList, areasList, showSocietySuggestions])
 
   const selectSociety = (soc) => {
     setCurrentLoc({
@@ -132,7 +157,25 @@ export default function WorkerSignup() {
 
   const addLocationRow = async () => {
     if (!currentLoc.stateName || !currentLoc.cityName || !currentLoc.areaName) {
-      toast.error('Type State, City and Area to add location')
+      toast.error('Please select State, City and Area to add location')
+      return
+    }
+
+    const matchedState = statesList.find(s => s.name.toLowerCase() === (currentLoc.stateName || '').trim().toLowerCase())
+    if (!matchedState) {
+      toast.error('Please select a valid State from the suggestions list')
+      return
+    }
+
+    const matchedCity = citiesList.find(c => c.name.toLowerCase() === (currentLoc.cityName || '').trim().toLowerCase())
+    if (!matchedCity) {
+      toast.error('Please select a valid City from the suggestions list')
+      return
+    }
+
+    const matchedArea = areasList.find(a => a.name.toLowerCase() === (currentLoc.areaName || '').trim().toLowerCase())
+    if (!matchedArea) {
+      toast.error('Please select a valid Area from the suggestions list')
       return
     }
 
@@ -146,9 +189,9 @@ export default function WorkerSignup() {
     }
 
     const newLoc = {
-      stateName: currentLoc.stateName,
-      cityName: currentLoc.cityName,
-      areaName: currentLoc.areaName,
+      stateName: matchedState.name,
+      cityName: matchedCity.name,
+      areaName: matchedArea.name,
       societyName: currentLoc.societyName || 'All Societies',
       latitude: currentLoc.latitude,
       longitude: currentLoc.longitude,
@@ -157,13 +200,13 @@ export default function WorkerSignup() {
     }
 
     setLocations([...locations, newLoc])
-      // Reset location adding state
-      setCurrentLoc({
-        stateId: '', cityId: '', areaId: '', societyId: '',
-        stateName: '', cityName: '', areaName: '', societyName: '',
-        latitude: undefined, longitude: undefined, address: ''
-      })
-      toast.success('Work Location added!')
+    // Reset location adding state
+    setCurrentLoc({
+      stateId: '', cityId: '', areaId: '', societyId: '',
+      stateName: '', cityName: '', areaName: '', societyName: '',
+      latitude: undefined, longitude: undefined, address: ''
+    })
+    toast.success('Work Location added!')
   }
 
   const handleLocationPin = async (coords) => {
@@ -327,7 +370,10 @@ export default function WorkerSignup() {
           stateName: loc.stateName,
           cityName: loc.cityName,
           areaName: loc.areaName,
-          societyName: loc.societyName
+          societyName: loc.societyName,
+          latitude: loc.latitude || null,
+          longitude: loc.longitude || null,
+          address: loc.address || ''
         })
       }
 
@@ -349,6 +395,9 @@ export default function WorkerSignup() {
       setLoading(false)
     }
   }
+
+  const isStateValid = statesList.some(s => s.name.toLowerCase() === (currentLoc.stateName || '').toLowerCase())
+  const isCityValid = citiesList.some(c => c.name.toLowerCase() === (currentLoc.cityName || '').toLowerCase())
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)', alignItems: 'center', justify: 'center', padding: '1.5rem' }}>
@@ -524,7 +573,7 @@ export default function WorkerSignup() {
                   className="btn btn-secondary btn-sm"
                   style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', fontSize: '11px' }}
                 >
-                  <MapPin size={12} /> Detect Current GPS
+                  <Navigation size={12} /> Detect Current Location
                 </button>
               </div>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -537,14 +586,37 @@ export default function WorkerSignup() {
                   <label className="form-label">State</label>
                   <input type="text" className="form-input" placeholder="Type State" autoComplete="off"
                     value={currentLoc.stateName}
-                    onChange={(e) => setCurrentLoc({ ...currentLoc, stateName: e.target.value })}
+                    onChange={(e) => setCurrentLoc({
+                      ...currentLoc,
+                      stateName: e.target.value,
+                      cityName: '',
+                      areaName: '',
+                      societyName: '',
+                      stateId: '',
+                      cityId: '',
+                      areaId: '',
+                      societyId: ''
+                    })}
                     onFocus={() => setShowStateSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowStateSuggestions(false), 200)}
                   />
                   {showStateSuggestions && statesList.filter(s => s.name.toLowerCase().includes((currentLoc.stateName||'').toLowerCase())).length > 0 && (
                     <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
                       {statesList.filter(s => s.name.toLowerCase().includes((currentLoc.stateName||'').toLowerCase())).map(st => (
-                        <li key={st.id} onClick={() => { setCurrentLoc({ ...currentLoc, stateName: st.name }); setShowStateSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{st.name}</li>
+                        <li key={st.id} onClick={() => {
+                          setCurrentLoc({
+                            ...currentLoc,
+                            stateName: st.name,
+                            stateId: st.id,
+                            cityName: '',
+                            areaName: '',
+                            societyName: '',
+                            cityId: '',
+                            areaId: '',
+                            societyId: ''
+                          });
+                          setShowStateSuggestions(false);
+                        }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{st.name}</li>
                       ))}
                     </ul>
                   )}
@@ -552,16 +624,36 @@ export default function WorkerSignup() {
 
                 <div className="form-group" style={{ margin: 0, position: 'relative' }}>
                   <label className="form-label">City</label>
-                  <input type="text" className="form-input" placeholder="Type City" autoComplete="off"
+                  <input type="text" className="form-input" placeholder={isStateValid ? "Type City" : "Select State first"} autoComplete="off"
+                    disabled={!isStateValid}
                     value={currentLoc.cityName}
-                    onChange={(e) => setCurrentLoc({ ...currentLoc, cityName: e.target.value })}
+                    onChange={(e) => setCurrentLoc({
+                      ...currentLoc,
+                      cityName: e.target.value,
+                      areaName: '',
+                      societyName: '',
+                      cityId: '',
+                      areaId: '',
+                      societyId: ''
+                    })}
                     onFocus={() => setShowCitySuggestions(true)}
                     onBlur={() => setTimeout(() => setShowCitySuggestions(false), 200)}
                   />
                   {showCitySuggestions && citiesList.filter(c => c.name.toLowerCase().includes((currentLoc.cityName||'').toLowerCase())).length > 0 && (
                     <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
                       {citiesList.filter(c => c.name.toLowerCase().includes((currentLoc.cityName||'').toLowerCase())).map(ct => (
-                        <li key={ct.id} onClick={() => { setCurrentLoc({ ...currentLoc, cityName: ct.name }); setShowCitySuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ct.name}</li>
+                        <li key={ct.id} onClick={() => {
+                          setCurrentLoc({
+                            ...currentLoc,
+                            cityName: ct.name,
+                            cityId: ct.id,
+                            areaName: '',
+                            societyName: '',
+                            areaId: '',
+                            societyId: ''
+                          });
+                          setShowCitySuggestions(false);
+                        }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ct.name}</li>
                       ))}
                     </ul>
                   )}
@@ -569,16 +661,32 @@ export default function WorkerSignup() {
 
                 <div className="form-group" style={{ margin: 0, position: 'relative' }}>
                   <label className="form-label">Area</label>
-                  <input type="text" className="form-input" placeholder="Type Area" autoComplete="off"
+                  <input type="text" className="form-input" placeholder={isCityValid ? "Type Area" : "Select City first"} autoComplete="off"
+                    disabled={!isCityValid}
                     value={currentLoc.areaName}
-                    onChange={(e) => setCurrentLoc({ ...currentLoc, areaName: e.target.value })}
+                    onChange={(e) => setCurrentLoc({
+                      ...currentLoc,
+                      areaName: e.target.value,
+                      societyName: '',
+                      areaId: '',
+                      societyId: ''
+                    })}
                     onFocus={() => setShowAreaSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowAreaSuggestions(false), 200)}
                   />
                   {showAreaSuggestions && areasList.filter(a => a.name.toLowerCase().includes((currentLoc.areaName||'').toLowerCase())).length > 0 && (
                     <ul className="glass" style={{ position: 'absolute', top: '100%', left: 0, right: 0, borderRadius: 'var(--radius-sm)', listStyle: 'none', padding: '4px', maxHeight: '160px', overflowY: 'auto', zIndex: 10, marginTop: '4px' }}>
                       {areasList.filter(a => a.name.toLowerCase().includes((currentLoc.areaName||'').toLowerCase())).map(ar => (
-                        <li key={ar.id} onClick={() => { setCurrentLoc({ ...currentLoc, areaName: ar.name }); setShowAreaSuggestions(false) }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ar.name}</li>
+                        <li key={ar.id} onClick={() => {
+                          setCurrentLoc({
+                            ...currentLoc,
+                            areaName: ar.name,
+                            areaId: ar.id,
+                            societyName: '',
+                            societyId: ''
+                          });
+                          setShowAreaSuggestions(false);
+                        }} style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: '4px', fontSize: '13px' }} className="glass-hover">{ar.name}</li>
                       ))}
                     </ul>
                   )}
@@ -592,14 +700,15 @@ export default function WorkerSignup() {
                     <input 
                       type="text" 
                       className="form-input" 
-                      placeholder="e.g. Green Park Residency"
+                      placeholder={isCityValid ? "e.g. Green Park Residency" : "Select City first"}
+                      disabled={!isCityValid}
                       value={currentLoc.societyName}
                       onChange={(e) => {
                         setCurrentLoc({ ...currentLoc, societyName: e.target.value })
                         setShowSocietySuggestions(true)
                       }}
                       onBlur={() => setTimeout(() => setShowSocietySuggestions(false), 200)}
-                      onFocus={() => { if (societiesList.length > 0 || currentLoc.societyName?.length >= 2) setShowSocietySuggestions(true) }}
+                      onFocus={() => { if (isCityValid) setShowSocietySuggestions(true) }}
                       autoComplete="off"
                     />
                     <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }} />

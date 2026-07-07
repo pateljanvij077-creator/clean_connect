@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Home, ClipboardList, Briefcase, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, AlertCircle, Menu, X } from 'lucide-react'
+import { Home, ClipboardList, Briefcase, Bell, User, LogOut, Sun, Moon, Sparkles, AlertCircle, X, MapPin, Settings } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { motion } from 'framer-motion'
 import { useAppStore } from '../../store/appStore'
@@ -8,6 +8,9 @@ import { getUnreadNotificationCount, subscribeToNotifications } from '../../serv
 import { updateWorkerAvailability } from '../../services/workers'
 import { signOut } from '../../services/auth'
 import { toast } from 'react-hot-toast'
+import LocationModal from '../common/LocationModal'
+
+let workerPrompted = false
 
 export default function WorkerLayout({ children }) {
   const navigate = useNavigate()
@@ -18,10 +21,24 @@ export default function WorkerLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [isAvailable, setIsAvailable] = useState(worker?.is_available || false)
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false)
 
   useEffect(() => {
     if (worker) {
       setIsAvailable(worker.is_available)
+    }
+  }, [worker])
+
+  useEffect(() => {
+    if (worker && !workerPrompted) {
+      setIsLocationModalOpen(true)
+      workerPrompted = true
+    }
+  }, [worker])
+
+  useEffect(() => {
+    if (!worker) {
+      workerPrompted = false
     }
   }, [worker])
 
@@ -190,16 +207,43 @@ export default function WorkerLayout({ children }) {
           top: 0,
           zIndex: 9
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <div style={{
-              background: 'var(--primary-light)',
-              padding: '6px',
-              borderRadius: '8px',
-              display: 'flex',
-              color: 'var(--primary)'
-            }}>
-              <Sparkles size={18} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            {/* Left section: Location */}
+            <div 
+              onClick={() => setIsLocationModalOpen(true)}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.5rem', 
+                cursor: 'pointer',
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-sm)',
+                transition: 'background var(--transition-fast)'
+              }}
+              className="glass-hover"
+              title="Click to select or search your location"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{
+                  background: 'var(--primary-light)',
+                  padding: '6px',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  color: 'var(--primary)'
+                }}>
+                  <MapPin size={18} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    LOCATION
+                  </span>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {worker?.current_area || worker?.current_city || 'Set Location...'}
+                  </span>
+                </div>
+              </div>
             </div>
+
             {worker?.verification_status !== 'approved' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--warning)', fontSize: '11px', fontWeight: 600 }}>
                 <AlertCircle size={14} />
@@ -311,6 +355,20 @@ export default function WorkerLayout({ children }) {
           )
         })}
       </nav>
+
+      {/* Zomato-style Location Picker Popup */}
+      <LocationModal
+        isOpen={isLocationModalOpen}
+        onClose={() => setIsLocationModalOpen(false)}
+        worker={worker}
+        user={user}
+        onLocationUpdated={async () => {
+          if (refreshProfile) {
+            await refreshProfile()
+          }
+        }}
+        forceSelection={!worker?.latitude || !worker?.longitude || (!worker?.current_city && !worker?.current_area)}
+      />
     </div>
   )
 }

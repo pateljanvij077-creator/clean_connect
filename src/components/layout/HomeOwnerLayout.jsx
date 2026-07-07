@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Home, Calendar, Heart, Bell, User, Settings, LogOut, Sun, Moon, Sparkles, MapPin, Menu, X } from 'lucide-react'
+import { Home, Calendar, Heart, Bell, User, LogOut, Sun, Moon, Sparkles, MapPin, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { motion } from 'framer-motion'
 import { useAppStore } from '../../store/appStore'
@@ -8,8 +8,9 @@ import { getUnreadNotificationCount, subscribeToNotifications } from '../../serv
 import { signOut } from '../../services/auth'
 import { supabase } from '../../supabase/client'
 import { toast } from 'react-hot-toast'
-import { getCurrentPosition, getLocationDetails } from '../../utils/gps'
-import { findOrCreateState, findOrCreateCity, findOrCreateArea, findOrCreateSociety } from '../../services/locations'
+import LocationModal from '../common/LocationModal'
+
+let homeownerPrompted = false
 
 export default function HomeOwnerLayout({ children }) {
   const navigate = useNavigate()
@@ -19,77 +20,20 @@ export default function HomeOwnerLayout({ children }) {
   const [unread, setUnread] = useState(0)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
-  const [autoDetecting, setAutoDetecting] = useState(false)
-
-  const autoDetectLocation = async () => {
-    if (autoDetecting || !user) return
-    setAutoDetecting(true)
-    try {
-      const coords = await getCurrentPosition()
-      const details = await getLocationDetails(coords.lat, coords.lng)
-      
-      let stateId = homeowner?.state_id || null
-      let cityId = homeowner?.city_id || null
-      let areaId = homeowner?.area_id || null
-      let societyId = homeowner?.society_id || null
-
-      if (details.state) {
-        const st = await findOrCreateState(details.state)
-        stateId = st.id
-      }
-      if (details.city && stateId) {
-        const ct = await findOrCreateCity(details.city, stateId)
-        cityId = ct.id
-      }
-      if (details.area && cityId) {
-        const ar = await findOrCreateArea(details.area, cityId)
-        areaId = ar.id
-      }
-      if (details.society && areaId && cityId) {
-        const soc = await findOrCreateSociety({
-          name: details.society,
-          areaId,
-          cityId,
-          latitude: coords.lat,
-          longitude: coords.lng,
-          address: details.address
-        })
-        societyId = soc.id
-      }
-
-      const { error } = await supabase
-        .from('homeowners')
-        .update({
-          state_id: stateId,
-          city_id: cityId,
-          area_id: areaId,
-          society_id: societyId,
-          society_name: details.society || homeowner?.society_name || 'My Location',
-          address: details.address || homeowner?.address || '',
-          latitude: coords.lat,
-          longitude: coords.lng
-        })
-        .eq('user_id', user.id)
-
-      if (error) throw error
-
-      toast.success('Location auto-detected successfully!')
-      if (refreshProfile) {
-        await refreshProfile()
-      }
-    } catch (err) {
-      console.error('Error auto-detecting location:', err)
-      toast.error('Location detection failed. Please allow GPS or update manually.')
-    } finally {
-      setAutoDetecting(false)
-    }
-  }
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false)
 
   useEffect(() => {
-    if (homeowner && (!homeowner.latitude || !homeowner.longitude || !homeowner.society_name)) {
-      autoDetectLocation()
+    if (homeowner && !homeownerPrompted) {
+      setIsLocationModalOpen(true)
+      homeownerPrompted = true
     }
-  }, [homeowner, user])
+  }, [homeowner])
+
+  useEffect(() => {
+    if (!homeowner) {
+      homeownerPrompted = false
+    }
+  }, [homeowner])
 
   useEffect(() => {
     if (!user) return
@@ -234,7 +178,7 @@ export default function HomeOwnerLayout({ children }) {
         }}>
           {/* Left section: Location */}
           <div 
-            onClick={autoDetectLocation}
+            onClick={() => setIsLocationModalOpen(true)}
             style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -245,25 +189,24 @@ export default function HomeOwnerLayout({ children }) {
               transition: 'background var(--transition-fast)'
             }}
             className="glass-hover"
-            title="Click to automatically re-detect your current GPS location"
+            title="Click to select or search your location"
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <div style={{
                 background: 'var(--primary-light)',
                 padding: '6px',
                 borderRadius: '8px',
                 display: 'flex',
-                color: 'var(--primary)',
-                animation: autoDetecting ? 'pulse 1.5s infinite' : 'none'
+                color: 'var(--primary)'
               }}>
                 <MapPin size={18} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  {autoDetecting ? 'DETECTING...' : 'LOCATION'}
+                  LOCATION
                 </span>
                 <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {autoDetecting ? 'Finding GPS...' : (homeowner?.society_name || 'Detecting...')}
+                  {homeowner?.society_name || 'Set Location...'}
                 </span>
               </div>
             </div>
@@ -372,6 +315,20 @@ export default function HomeOwnerLayout({ children }) {
           )
         })}
       </nav>
+
+      {/* Zomato-style Location Picker Popup */}
+      <LocationModal
+        isOpen={isLocationModalOpen}
+        onClose={() => setIsLocationModalOpen(false)}
+        homeowner={homeowner}
+        user={user}
+        onLocationUpdated={async () => {
+          if (refreshProfile) {
+            await refreshProfile()
+          }
+        }}
+        forceSelection={!homeowner?.latitude || !homeowner?.longitude || !homeowner?.society_name}
+      />
     </div>
   )
 }

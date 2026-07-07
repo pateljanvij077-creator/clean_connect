@@ -11,6 +11,7 @@ import { Briefcase, CheckCircle, ShieldAlert, Star, ToggleLeft, Clock, MapPin, T
 import { toast } from 'react-hot-toast'
 import { getCurrentPosition, getLocationDetails } from '../../utils/gps'
 import { motion, AnimatePresence } from 'framer-motion'
+import LocationModal from '../../components/common/LocationModal'
 
 const statVariants = {
   hidden: { opacity: 0, y: 24, scale: 0.95 },
@@ -29,7 +30,7 @@ const statVariants = {
 
 export default function WorkerDashboard() {
   const navigate = useNavigate()
-  const { worker, refreshProfile } = useAuth()
+  const { worker, user, refreshProfile } = useAuth()
 
   // Dashboard states
   const [bookings, setBookings] = useState([])
@@ -37,6 +38,7 @@ export default function WorkerDashboard() {
   const [loading, setLoading] = useState(true)
   const [isAvailable, setIsAvailable] = useState(worker?.is_available || false)
   const [availabilityStatus, setAvailabilityStatus] = useState(worker?.availability_status || 'offline')
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false)
 
   // Auto-refresh GPS on app launch (Dashboard mount)
   useEffect(() => {
@@ -114,29 +116,6 @@ export default function WorkerDashboard() {
     }
   }
 
-  const manualGpsRefresh = async () => {
-    const toastId = toast.loading('Refreshing GPS location...')
-    try {
-      const coords = await getCurrentPosition()
-      const details = await getLocationDetails(coords.lat, coords.lng)
-      await updateWorkerGPSLocation(worker.id, {
-        latitude: coords.lat,
-        longitude: coords.lng,
-        cityName: details.city,
-        areaName: details.area
-      })
-      toast.success('GPS location updated successfully!', { id: toastId })
-      await refreshProfile()
-    } catch (err) {
-      console.error(err)
-      if (err.code === 1) {
-        toast.error('Geolocation permission denied. Please allow location permissions in your browser settings.', { id: toastId })
-      } else {
-        toast.error(err.message || 'Failed to get GPS location. Please try again.', { id: toastId })
-      }
-    }
-  }
-
   // Pre-process bookings data for Recharts (bookings per day)
   const getChartData = () => {
     const counts = {}
@@ -186,7 +165,7 @@ export default function WorkerDashboard() {
               whileHover={{ scale: 1.04, y: -1 }}
               whileTap={{ scale: 0.96 }}
               type="button"
-              onClick={manualGpsRefresh}
+              onClick={() => setIsLocationModalOpen(true)}
               className="btn btn-secondary flex-center"
               style={{ padding: '8px 12px', gap: '6px', fontSize: '12px', height: '36px', display: 'flex', alignItems: 'center' }}
             >
@@ -372,6 +351,16 @@ export default function WorkerDashboard() {
         </motion.div>
 
       </div>
+
+      <LocationModal
+        isOpen={isLocationModalOpen}
+        onClose={() => setIsLocationModalOpen(false)}
+        worker={worker}
+        user={user}
+        onLocationUpdated={async () => {
+          await refreshProfile()
+        }}
+      />
     </WorkerLayout>
   )
 }

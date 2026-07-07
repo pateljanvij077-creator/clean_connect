@@ -126,7 +126,7 @@ export async function getLocationDetails(lat, lng) {
   // Try to find the city
   const city = addr.city || addr.town || addr.municipality || addr.city_district || addr.suburb || ''
   // Try to find local area
-  const area = addr.neighbourhood || addr.suburb || addr.residential || addr.village || addr.county || ''
+  const area = addr.suburb || addr.neighbourhood || addr.residential || addr.village || addr.county || ''
   // Try to find state
   const state = addr.state || ''
   // Try to extract building or society name if available

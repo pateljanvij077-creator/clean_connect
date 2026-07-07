@@ -75,7 +75,7 @@ export async function searchSocieties(query, cityId = null) {
  * @param {object} param0 
  * @returns {Promise<object>} Created/existing society
  */
-export function normalizeSocietyName(name) {
+export function normalizeLocationName(name) {
   if (!name) return ''
   return name
     .trim()
@@ -86,6 +86,8 @@ export function normalizeSocietyName(name) {
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 }
+
+export const normalizeSocietyName = normalizeLocationName;
 
 /**
  * Find or create a society to prevent duplicates
@@ -105,7 +107,25 @@ export async function findOrCreateSociety({ name, areaId, cityId, latitude, long
     .maybeSingle()
 
   if (checkError) throw checkError
-  if (existing) return existing
+  if (existing) {
+    // If coordinates are provided and have changed, update the society's coordinates in the database
+    if (latitude && longitude && (existing.latitude !== latitude || existing.longitude !== longitude)) {
+      const { data: updated, error: updateError } = await supabase
+        .from('societies')
+        .update({
+          latitude,
+          longitude,
+          address: address || existing.address
+        })
+        .eq('id', existing.id)
+        .select()
+        .single()
+      
+      if (updateError) throw updateError
+      return updated
+    }
+    return existing
+  }
 
   // 2. If it does not exist, insert it
   const { data: created, error: insertError } = await supabase
@@ -129,7 +149,9 @@ export async function findOrCreateSociety({ name, areaId, cityId, latitude, long
  * Find or create a state
  */
 export async function findOrCreateState(name) {
-  const normalizedName = name.trim()
+  const normalizedName = normalizeLocationName(name)
+  if (!normalizedName) throw new Error('State name cannot be empty')
+
   const { data: existing, error: checkError } = await supabase
     .from('states')
     .select('*')
@@ -153,7 +175,9 @@ export async function findOrCreateState(name) {
  * Find or create a city
  */
 export async function findOrCreateCity(name, stateId) {
-  const normalizedName = name.trim()
+  const normalizedName = normalizeLocationName(name)
+  if (!normalizedName) throw new Error('City name cannot be empty')
+
   const { data: existing, error: checkError } = await supabase
     .from('cities')
     .select('*')
@@ -178,7 +202,9 @@ export async function findOrCreateCity(name, stateId) {
  * Find or create an area
  */
 export async function findOrCreateArea(name, cityId) {
-  const normalizedName = name.trim()
+  const normalizedName = normalizeLocationName(name)
+  if (!normalizedName) throw new Error('Area name cannot be empty')
+
   const { data: existing, error: checkError } = await supabase
     .from('areas')
     .select('*')
